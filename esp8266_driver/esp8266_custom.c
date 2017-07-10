@@ -6,13 +6,10 @@ static int esp_on(int prog)
 {
 	int ret = 0;
 
+	// check if UART is OK (we must be ensure that UART_RX has high voltage level)
 	struct file * f_esp_uart;
 	mm_segment_t oldfs;
 
-	struct spi_master * master;
-	struct spi_board_info chip;
-
-	// check if UART is OK (we must be ensure that UART_RX has high voltage level)
 	oldfs = get_fs();
 	set_fs(KERNEL_DS);
 
@@ -24,53 +21,36 @@ static int esp_on(int prog)
 	}
 	filp_close(f_esp_uart, NULL);
 	set_fs(oldfs);
+	//////////////////////////////////////////////////////////
 
 
 	// make SPI_CS high
-    chip.max_speed_hz = 5000000,
-    chip.bus_num = 0,
-    chip.chip_select = 0,
-    chip.mode = SPI_MODE_0,	// don't forget to make SPI_MODE_0 | SPI_CS_HIGH after start
-
-    master = spi_busnum_to_master(chip.bus_num);
-    if(!master)
+    esp_transfer.spi_dev->mode = SPI_MODE_0,	// don't forget to make SPI_MODE_0 | SPI_CS_HIGH after start
+    ret = spi_setup(esp_transfer.spi_dev);
+    if(ret != 0)
     {
-        printk("MASTER not found.\n");
-        return -ENODEV;
+        printk("Error spi setup SPI_CS high.\n");
+        return ret;
     }
-
-	esp_transfer.spi_dev = spi_new_device(master, &chip);
-    if(!(esp_transfer.spi_dev)) 
-    {
-        printk("FAILED to create slave(1).\n");
-        return -ENODEV;
-    }
-    spi_unregister_device(esp_transfer.spi_dev);
-
+    //////////////////////////////////////////////////////////
 
     // power OFF
     gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
     gpio_set_value_cansleep(ESP_PROG_GPIO, prog);
-	mdelay(2000);
+	msleep(2000);
 	// powen ON
  	gpio_set_value_cansleep(ESP_PWR_GPIO, 1);
 
+
  	// SPI_CS_HIGH for esp8266
- 	chip.mode = SPI_MODE_0 | SPI_CS_HIGH,
-    master = spi_busnum_to_master(chip.bus_num);
-    if(!master)
+ 	esp_transfer.spi_dev->mode = SPI_MODE_0 | SPI_CS_HIGH,
+    ret = spi_setup(esp_transfer.spi_dev);
+    if(ret != 0)
     {
-        printk("MASTER not found.\n");
-        return -ENODEV;
+        printk("Error spi setup SPI_CS low.\n");
+        return ret;
     }
-
-	esp_transfer.spi_dev = spi_new_device(master, &chip);
-    if(!(esp_transfer.spi_dev)) 
-    {
-        printk("FAILED to create slave(2).\n");
-        return -ENODEV;
-    }
-
+    //////////////////////////////////////////////////////////
 
 	return ret;
 }
@@ -78,7 +58,6 @@ static int esp_on(int prog)
 static int esp_off(void)
 {
 	// power OFF
-	spi_unregister_device(esp_transfer.spi_dev);
     gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
 	return 0;
 }
@@ -112,8 +91,7 @@ static ssize_t esp_cmd_write(struct file *file, const char __user *buf, size_t l
 
 
 
-
-		ret = esp_on(0);
+		ret = esp_on(ESP_BOOT_FLASH);
 		if(ret != 0)
 			pr_info("ERROR ON\n");
 		else
@@ -134,7 +112,7 @@ static ssize_t esp_cmd_write(struct file *file, const char __user *buf, size_t l
 			pr_info("ERROR OFF\n");
 		else
 		{
-			ret = esp_on(0);
+			ret = esp_on(ESP_BOOT_FLASH);
 			if(ret != 0)
 				pr_info("ERROR ON\n");
 			else
@@ -148,7 +126,7 @@ static ssize_t esp_cmd_write(struct file *file, const char __user *buf, size_t l
 			pr_info("ERROR OFF\n");
 		else
 		{
-			ret = esp_on(1);
+			ret = esp_on(ESP_BOOT_UART);
 			if(ret != 0)
 				pr_info("ERROR ON\n");
 			else
@@ -182,6 +160,9 @@ static int __init ktest_module_init( void )
 {
 	int res = 0;
 
+	// SPI init
+	struct spi_master * master;
+	struct spi_board_info chip;
 	if(gpio_is_valid(ESP_PROG_GPIO))
 	{
 		printk("esp_custom: ESP_PROG_GPIO %d\n", ESP_PROG_GPIO);
@@ -212,6 +193,28 @@ static int __init ktest_module_init( void )
 		return -EINVAL;
 	}
 
+	// make SPI_CS high
+    chip.max_speed_hz = 5000000,
+    chip.bus_num = 0,
+    chip.chip_select = 0,
+    chip.mode = SPI_MODE_0,	// don't forget to make SPI_MODE_0 | SPI_CS_HIGH after start
+
+    master = spi_busnum_to_master(chip.bus_num);
+    if(!master)
+    {
+        printk("MASTER not found.\n");
+        return -ENODEV;
+    }
+
+	esp_transfer.spi_dev = spi_new_device(master, &chip);
+    if(!(esp_transfer.spi_dev)) 
+    {
+        printk("FAILED to create slave(1).\n");
+        return -ENODEV;
+    }
+    //////////////////////////////////////////////////////////
+
+
 	// Create new virtual device in /dev/ 
 	esp_ctrl.minor = MISC_DYNAMIC_MINOR;
     esp_ctrl.name = "esp8266_ctrl";
@@ -229,8 +232,9 @@ static void __exit ktest_module_exit( void )
 {
 	gpio_free(ESP_PROG_GPIO);
 	gpio_free(ESP_PWR_GPIO);
-	spi_unregister_device(esp_transfer.spi_dev);
-	misc_deregister( &esp_ctrl ); 
+	if(esp_transfer.spi_dev)
+		spi_unregister_device(esp_transfer.spi_dev); // ??? is it enough?
+	misc_deregister(&esp_ctrl); 
 	printk( "ESP8266 is free\n" ); 
 }
 
