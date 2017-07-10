@@ -1,29 +1,57 @@
-#include <linux/kernel.h>
-#include <linux/delay.h>
-#include <linux/init.h>
-#include <linux/wait.h>
-#include <linux/gpio.h>
-#include <linux/module.h>
-#include <linux/fs.h>
-#include <linux/miscdevice.h>
-#include <linux/string.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
+#include "esp8266_custom.h"
 
-#define ESP_CMD_ON		"on\n"
-#define ESP_CMD_OFF		"off\n"
-#define ESP_CMD_RESET	"rst\n"
-#define ESP_CMD_PROG	"prog\n"
-#define ESP_MAX_CMD_LEN	10
+static esp_transfer_t esp_transfer;
+
+static int esp_on(void)
+{
+	int ret = 0;
+
+
+	// check if UART is OK (we must be ensure that UART_RX has high voltage level)
+	struct file * f_esp_uart;
+	mm_segment_t oldfs;
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+
+	f_esp_uart = filp_open(ESP_UART_DEV, O_RDWR, ESP_UART_MODE);
+	if(IS_ERR_OR_NULL(f_esp_uart)) 
+	{
+		printk(KERN_ALERT "Error while trying to open %s: %p\n", ESP_UART_DEV, f_esp_uart);
+		return -EBADFD;
+	}
+	filp_close(f_esp_uart, NULL);
+	set_fs(oldfs);
+
+
+
+
+
+	return ret;
+}
+
+static int esp_off(void)
+{
+	return 0;
+}
+
+static int esp_reset(void)
+{
+	return 0;
+}
+
+static int esp_to_prog(void)
+{
+	return 0;
+}
 
 static ssize_t esp_cmd_write(struct file *file, const char __user *buf, size_t len, loff_t *ppos)
 {
 	ssize_t ret;
 	void * cmd_buf;
 
-	if(len > ESP_MAX_CMD_LEN)
+	if((len > ESP_MAX_CMD_LEN) || (len == 0))
 	{
-		pr_info("Too long ESP command\n");
+		pr_info("Wrong size of ESP command\n");
 		return -EINVAL;
 	}
 	
@@ -40,18 +68,34 @@ static ssize_t esp_cmd_write(struct file *file, const char __user *buf, size_t l
 
 	if(memcmp(buf, ESP_CMD_ON, len) == 0)
 	{
-    	pr_info("ESP ON\n");
+		ret = esp_on();
+		if(ret != 0)
+			pr_info("ERROR ON\n");
+		else
+    		pr_info("ESP ON\n");
 	}
     else if(memcmp(buf, ESP_CMD_OFF, len) == 0)
     {
+    	ret = esp_off();
+    	if(ret != 0)
+			pr_info("ERROR ON\n");
+		else
 		pr_info("ESP OFF\n");
     }
 	else if(memcmp(buf, ESP_CMD_RESET, len) == 0)
 	{
+		ret = esp_reset();
+		if(ret != 0)
+			pr_info("ERROR ON\n");
+		else
 		pr_info("ESP RESET\n");
 	}
 		else if(memcmp(buf, ESP_CMD_PROG, len) == 0)
 	{
+		ret = esp_to_prog();
+		if(ret != 0)
+			pr_info("ERROR ON\n");
+		else
 		pr_info("ESP switched to programming mode\n");
 	}
 	else
@@ -60,7 +104,7 @@ static ssize_t esp_cmd_write(struct file *file, const char __user *buf, size_t l
 	}
 
 	kfree(cmd_buf);
-    return len; 	// почему если ноль, то зацикливается?
+    return len;
 }
 
 static const struct file_operations esp_ctrl_fops = 
@@ -81,6 +125,24 @@ static int __init ktest_module_init( void )
 {
 	int res = 0;
 
+	// take spi under control
+	struct spi_master * master;
+
+/*	struct spi_board_info * chip;
+	spi_device_info->modalias = "my-device-driver-name",
+    spi_device_info->max_speed_hz = 1, //speed your device (slave) can handle
+    spi_device_info->bus_num = 0,
+    spi_device_info->chip_select = 0,
+    spi_device_info->mode = 3,
+
+	esp_transfer.spi_dev = spi_new_device(master, chip);*/
+
+
+
+
+
+
+	// Create new virtual device in /dev/ 
 	esp_ctrl.minor = MISC_DYNAMIC_MINOR;
     esp_ctrl.name = "esp8266_ctrl";
     esp_ctrl.fops = &esp_ctrl_fops;
@@ -89,11 +151,14 @@ static int __init ktest_module_init( void )
     if (res) 
     	return res;
 
+
     printk( "ESP8266 under control\n" ); 
 	return res;
 } 
 static void __exit ktest_module_exit( void )
 {
+	// gpio_free(ESP_RST_GPIO);
+	// gpio_free(ESP_PWR_GPIO);
 	misc_deregister( &esp_ctrl ); 
 	printk( "ESP8266 is free\n" ); 
 }
