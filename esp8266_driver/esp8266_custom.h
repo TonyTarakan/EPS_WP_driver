@@ -14,6 +14,12 @@
 
 #include <linux/spi/spi.h>
 
+#include <linux/sierra_bsudefs.h>
+#include <../arch/arm/mach-msm/board-9615.h>
+
+#define ESP_PWR_GPIO	30						// look at gpiolib by Sierra //78		//32
+#define ESP_PROG_GPIO	SWIMCU_GPIO_TO_SYS(4)	// look at gpiolib by Sierra
+
 #define ESP_CMD_ON		"on\n"
 #define ESP_CMD_OFF		"off\n"
 #define ESP_CMD_RESET	"rst\n"
