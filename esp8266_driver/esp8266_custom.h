@@ -11,6 +11,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/tty.h>
+#include <linux/netdevice.h>
 
 #include <linux/spi/spi.h>
 
@@ -29,8 +30,21 @@
 #define ESP_UART_DEV	"/dev/ttyHS0"
 #define ESP_UART_MODE	0
 
+#define ESP_BOOT_FLASH	0
+#define ESP_BOOT_UART	1
+
 typedef struct
 {
-	struct spi_device * spi_dev;
-}
-esp_transfer_t;
+	// ESP switch control
+	struct file_operations	ctrl_fops;
+	struct miscdevice   	ctrl_dev;
+	// ESP SPI
+	struct spi_master 		* master;
+	struct spi_board_info	chip;
+	struct spi_device		* spi_dev;
+	// ESP network interfaces
+	struct net_device_ops 	wifi_ndops;
+	struct net_device		* wifi_dev;
+	struct net_device_ops 	mesh_ndops;
+	struct net_device		* mesh_dev;
+}esp_t;
