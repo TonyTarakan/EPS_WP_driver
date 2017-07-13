@@ -151,6 +151,7 @@ static void wifi_setup(struct net_device * dev)
 	dev->dev_addr[3] = 0x11;
 	dev->dev_addr[4] = 0x11;
 	dev->dev_addr[5] = 0xF1;
+	ether_setup(dev);
 }
 
 static void mesh_setup(struct net_device * dev) 
@@ -162,6 +163,7 @@ static void mesh_setup(struct net_device * dev)
 	dev->dev_addr[3] = 0x11;
 	dev->dev_addr[4] = 0x1E;
 	dev->dev_addr[5] = 0x5F;
+	ether_setup(dev);
 } 
 
 static int esp_net_open( struct net_device * dev )
