@@ -29,7 +29,7 @@ static int esp_on(int prog)
     ret = spi_setup(esp.spi_dev);
     if(ret != 0)
     {
-        printk("Error spi setup SPI_CS high.\n");
+        printk(KERN_ALERT "Error spi setup SPI_CS high.\n");
         return ret;
     }
     //////////////////////////////////////////////////////////
@@ -37,7 +37,7 @@ static int esp_on(int prog)
     // power OFF
     gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
     gpio_set_value_cansleep(ESP_PROG_GPIO, prog);
-	msleep(2000);
+	msleep(3000);
 	// powen ON
  	gpio_set_value_cansleep(ESP_PWR_GPIO, 1);
 
@@ -47,7 +47,7 @@ static int esp_on(int prog)
     ret = spi_setup(esp.spi_dev);
     if(ret != 0)
     {
-        printk("Error spi setup SPI_CS low.\n");
+        printk(KERN_ALERT "Error spi setup SPI_CS low.\n");
         return ret;
     }
     //////////////////////////////////////////////////////////
@@ -142,55 +142,137 @@ static ssize_t esp_cmd_write(struct file * file, const char __user * buf, size_t
     return len;
 }
 
-static void wifi_setup(struct net_device * dev) 
+static void wifi_setup(struct net_device * netdev) 
 {
-	dev->netdev_ops = &(esp.wifi_ndops);
-	dev->dev_addr[0] = 0xE5;
-	dev->dev_addr[1] = 0x82;
-	dev->dev_addr[2] = 0x66;
-	dev->dev_addr[3] = 0x11;
-	dev->dev_addr[4] = 0x11;
-	dev->dev_addr[5] = 0xF1;
-	ether_setup(dev);
+	netdev->netdev_ops = &(esp.wifi_ndops);
+	netdev->dev_addr[0] = 0xE5;
+	netdev->dev_addr[1] = 0x82;
+	netdev->dev_addr[2] = 0x66;
+	netdev->dev_addr[3] = 0x11;
+	netdev->dev_addr[4] = 0x11;
+	netdev->dev_addr[5] = 0xF1;
+	ether_setup(netdev);
 }
 
-static void mesh_setup(struct net_device * dev) 
+static void mesh_setup(struct net_device * netdev) 
 {
-	dev->netdev_ops = &(esp.mesh_ndops);
-	dev->dev_addr[0] = 0xE5;
-	dev->dev_addr[1] = 0x82;
-	dev->dev_addr[2] = 0x66;
-	dev->dev_addr[3] = 0x11;
-	dev->dev_addr[4] = 0x1E;
-	dev->dev_addr[5] = 0x5F;
-	ether_setup(dev);
+	netdev->netdev_ops = &(esp.mesh_ndops);
+	netdev->dev_addr[0] = 0xE5;
+	netdev->dev_addr[1] = 0x82;
+	netdev->dev_addr[2] = 0x66;
+	netdev->dev_addr[3] = 0x11;
+	netdev->dev_addr[4] = 0x1E;
+	netdev->dev_addr[5] = 0x5F;
+	ether_setup(netdev);
 } 
 
-static int esp_net_open( struct net_device * dev )
-{ 
-   netif_start_queue(dev); 
-   return 0; 
+// Transmit pack to SPI
+static void esp_tx_work_handler(struct work_struct * tx_work)
+{
+	//esp_net_priv_t * esp_priv = container_of(tx_work, esp_net_priv_t, tx_work); //WTF??
+
+
+	printk(KERN_INFO "esp_tx_work_handler\n");
+
+	// mutex_lock(&esp_priv->spi_lock);
+
+	//blabla
+
+	// mutex_unlock(&esp_priv->spi_lock);
 }
 
-static int esp_net_close( struct net_device * dev)
+// Start to transmit to SPI
+static int esp_net_start_tx(struct sk_buff * skb, struct net_device * netdev)
 { 
-   netif_stop_queue(dev); 
-   return 0; 
+	esp_net_priv_t * esp_priv = netdev_priv(netdev);
+	//struct spi_device * spi = esp_priv->spi;
+
+	printk(KERN_INFO "esp_net_start_tx\n");
+
+
+
+
+	// Add buffer processing to irq handling queue
+	// netif_stop_queue(netdev);	// MUST BE WAKED AFTER !!! (maybe after spi answer)
+	esp_priv->tx_skb = skb;
+	queue_work(esp_priv->wq, &esp_priv->tx_work);
+
+	return NETDEV_TX_OK;
+}
+
+static int esp_net_open(struct net_device * netdev)
+{ 
+	esp_net_priv_t * esp_priv = netdev_priv(netdev);
+	printk(KERN_INFO "esp_net_open\n");
+	//struct spi_device * spi = priv->spi;
+
+	// mutex_lock(&esp_priv->spi_lock);
+
+////
+
+	// GPIO irq reristration
+	// ret = request_threaded_irq(spi->irq, NULL, hi3110_can_ist, flags, DEVICE_NAME, priv);
+	// if(res != 0) return res;
+
+	esp_priv->wq = alloc_workqueue("esp_net_wq", WQ_FREEZABLE | WQ_MEM_RECLAIM, 0);
+	if (!esp_priv->wq)
+	{
+		return -ENOMEM;
+	}
+	INIT_WORK(&esp_priv->tx_work, esp_tx_work_handler);
+	netif_wake_queue(netdev); 
+
+	// mutex_unlock(&esp_priv->spi_lock);
+	return 0; 
+}
+
+static int esp_net_close(struct net_device * netdev)
+{ 
+	esp_net_priv_t * esp_priv = netdev_priv(netdev);
+	printk(KERN_INFO "esp_net_close\n");
+	destroy_workqueue(esp_priv->wq);
+	return 0; 
 } 
 
-static int esp_net_start_xmit( struct sk_buff * skb, struct net_device * dev)
-{ 
-   dev_kfree_skb(skb); 
-   return 0; 
-}
-
-
-static int __init ktest_module_init( void )
+static int esp_init_spi_gpio(void)
 {
 	int res = 0;
+	// SPI data GPIOs
+    if(gpio_is_valid(ESP_BUSY_GPIO))
+	{
+		printk(KERN_INFO "esp_custom: ESP_BUSY_GPIO %d\n", ESP_BUSY_GPIO);
 
+		res = gpio_request(ESP_BUSY_GPIO, "ESP_BUSY");
+		if(res < 0) return res;
+		res = gpio_direction_input(ESP_BUSY_GPIO);
+		if(res < 0) return res;
+	}
+	else
+	{
+		printk(KERN_ALERT "esp_custom: invalid GPIO%d\n", ESP_BUSY_GPIO);
+		return -EINVAL;
+	}
+	
+    if(gpio_is_valid(ESP_HAS_DATA_GPIO))
+	{
+		printk(KERN_INFO "esp_custom: ESP_HAS_DATA_GPIO %d\n", ESP_HAS_DATA_GPIO);
 
-	// Take GPIOs under control
+		res = gpio_request(ESP_HAS_DATA_GPIO, "ESP_BUSY");
+		if(res < 0) return res;
+		res = gpio_direction_input(ESP_HAS_DATA_GPIO);
+		if(res < 0) return res;
+	}
+	else
+	{
+		printk(KERN_ALERT "esp_custom: invalid GPIO%d\n", ESP_HAS_DATA_GPIO);
+		return -EINVAL;
+	}
+	return res;
+}
+
+static int esp_init_switch_gpio(void)
+{
+	int res = 0;
 	if(gpio_is_valid(ESP_PROG_GPIO))
 	{
 		printk("esp_custom: ESP_PROG_GPIO %d\n", ESP_PROG_GPIO);
@@ -220,7 +302,17 @@ static int __init ktest_module_init( void )
 		printk("esp_custom: invalid GPIO%d\n", ESP_PWR_GPIO);
 		return -EINVAL;
 	}
-    //////////////////////////////////////////////////////////
+	return res;
+}
+
+static int __init ktest_module_init(void)
+{
+	int res = 0;
+
+	// Take GPIOs under control
+	res = esp_init_switch_gpio();
+	if(res < 0) return res;
+	//////////////////////////////////////////////////////////
 
 
 	// SPI init
@@ -242,8 +334,9 @@ static int __init ktest_module_init( void )
         printk("FAILED to create slave(1).\n");
         return -ENODEV;
     }
-    //////////////////////////////////////////////////////////
 
+    res = esp_init_spi_gpio();
+    if(res < 0) return res;
 
 	// Create new virtual device in /dev/ for switch control
 	esp.ctrl_fops.owner 	= THIS_MODULE;
@@ -265,18 +358,18 @@ static int __init ktest_module_init( void )
 	// Create new network devices
 	esp.wifi_ndops.ndo_open 		= esp_net_open;
 	esp.wifi_ndops.ndo_stop 		= esp_net_close;
-	esp.wifi_ndops.ndo_start_xmit	= esp_net_start_xmit;
+	esp.wifi_ndops.ndo_start_xmit	= esp_net_start_tx;	// transmit socket buffer from interface to physical net
 
 	esp.mesh_ndops.ndo_open 		= esp_net_open;
 	esp.mesh_ndops.ndo_stop 		= esp_net_close;
-	esp.mesh_ndops.ndo_start_xmit	= esp_net_start_xmit;
+	esp.mesh_ndops.ndo_start_xmit	= esp_net_start_tx;
 
 
 	esp.wifi_dev = alloc_netdev( 0, "espwifi%d", wifi_setup);
 	res = register_netdev(esp.wifi_dev);
 	if(res != 0)
 	{
-		printk( KERN_INFO "Failed to register wifi interface\n" ); 
+		printk(KERN_INFO "Failed to register wifi interface\n" ); 
 		free_netdev(esp.wifi_dev);
 		return res; 
 	}
@@ -285,7 +378,7 @@ static int __init ktest_module_init( void )
 	res = register_netdev(esp.mesh_dev);
 	if(res != 0)
 	{
-		printk( KERN_INFO "Failed to register mesh interface\n" ); 
+		printk(KERN_INFO "Failed to register mesh interface\n" ); 
 		free_netdev(esp.mesh_dev);
 		return res; 
 	}
@@ -296,10 +389,12 @@ static int __init ktest_module_init( void )
 	return res;
 }
 
-static void __exit ktest_module_exit( void )
+static void __exit ktest_module_exit(void)
 {
 	gpio_free(ESP_PROG_GPIO);
 	gpio_free(ESP_PWR_GPIO);
+	gpio_free(ESP_BUSY_GPIO);
+	gpio_free(ESP_HAS_DATA_GPIO);
 	spi_unregister_device(esp.spi_dev); // ??? is it enough?
 	unregister_netdev(esp.wifi_dev);
 	free_netdev(esp.wifi_dev);
