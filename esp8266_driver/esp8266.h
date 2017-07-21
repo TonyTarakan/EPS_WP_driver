@@ -53,45 +53,52 @@
 #define ESP_BOOT_FLASH		0
 #define ESP_BOOT_UART		1
 
-
+typedef enum esp_state
+{
+	IS_ON,
+	IS_OFF,
+	IS_IN_PROG,
+}esp_state;
 
 /* Network device private data */
 typedef struct
 {
-	struct net_device 		* net;
-	struct spi_device 		* spi;
+	struct net_device 	* net;
+	struct sk_buff 		* skb;
+}esp_net_priv_t;
+
+typedef struct
+{
+	int state;
+	struct mutex lock;
+
+	// ESP switch control
+	struct file_operations	ctrl_fops;
+	struct miscdevice   	ctrl_dev;
+
+
+	// ESP SPI
 	struct spi_master 		* master;
 	struct spi_board_info	chip;
+	struct spi_device		* spi_dev;
 
-	
 	unsigned char spi_blk_tx_buf[ESP_SPI_BUF_SIZE];
 	unsigned char spi_blk_rx_buf[ESP_SPI_BUF_SIZE];
 
 	unsigned char spi_tx_buf[ESP_SPI_MAX_PACK_SIZE];
 	unsigned char spi_rx_buf[ESP_SPI_MAX_PACK_SIZE];
 
-	struct sk_buff * tx_skb;
-
 	struct workqueue_struct	* wq;
-	struct work_struct 		tx_work;	// work to transmit data to SPI
-	struct work_struct 		rx_work;	// work to receive data from SPI
-}esp_net_priv_t;
+	struct work_struct work;	// work to transmit or receive SPI data
 
-typedef struct
-{
-	// ESP switch control
-	struct file_operations	ctrl_fops;
-	struct miscdevice   	ctrl_dev;
-	// ESP SPI
-	struct spi_master 		* master;
-	struct spi_board_info	chip;
-	struct spi_device		* spi_dev;
+	int data_gpio_irq;
+	int busy_gpio_irq;
+	//int timer_irq;
 
-	int rx_gpio_irq;
-	// ESP network interfaces
-	struct net_device_ops 	wifi_ndops;
-	struct net_device		* wifi_dev;
-	struct net_device_ops 	mesh_ndops;
-	struct net_device		* mesh_dev;
+	// // ESP network interfaces
+	struct net_device_ops 	ndops;
 }esp_t;
 
+int esp_init(void);
+int esp_deinit(void);
+//ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t len, loff_t * ppos);
