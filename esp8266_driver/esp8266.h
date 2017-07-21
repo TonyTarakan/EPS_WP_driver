@@ -9,6 +9,7 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
+#include <linux/mutex.h>
 #include <linux/tty.h>
 #include <linux/netdevice.h>
 #include <linux/interrupt.h>
@@ -35,10 +36,10 @@
 #define ESP_SPI_BUF_WORD_SIZE	((ESP_SPI_BUF_SIZE - ESP_SPI_BUF_HEAD_SIZE)/4)
 #define ESP_SPI_MAX_PACK_SIZE	2048
 
-#define MASTER_WRITE_DATA_TO_SLAVE_CMD                      2
-#define MASTER_READ_DATA_FROM_SLAVE_CMD                     3
-#define MASTER_WRITE_STATUS_TO_SLAVE_CMD                    1
-#define MASTER_READ_STATUS_FROM_SLAVE_CMD                   4
+#define MASTER_WRITE_DATA_TO_SLAVE_CMD		2
+#define MASTER_READ_DATA_FROM_SLAVE_CMD		3
+#define MASTER_WRITE_STATUS_TO_SLAVE_CMD	1
+#define MASTER_READ_STATUS_FROM_SLAVE_CMD	4
 
 #define ESP_CMD_ON			"on\n"
 #define ESP_CMD_OFF			"off\n"
@@ -99,6 +100,6 @@ typedef struct
 	struct net_device_ops 	ndops;
 }esp_t;
 
-int esp_init(void);
-int esp_deinit(void);
+// int esp_init(void);
+// int esp_deinit(void);
 //ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t len, loff_t * ppos);
