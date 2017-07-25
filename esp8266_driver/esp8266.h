@@ -15,11 +15,16 @@
 #include <linux/interrupt.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
+#include <linux/if_arp.h>
+
+#include <linux/etherdevice.h>
 
 #include <linux/spi/spi.h>
 
 #include <linux/sierra_bsudefs.h>
 #include <../arch/arm/mach-msm/board-9615.h>
+
+#include "slip.h"
 
 //look at gpiolib.c by Sierra
 #define ESP_PWR_GPIO		SWIMCU_GPIO_TO_SYS(5)	// ESP_GPIO_ON GPIO39 //78
@@ -87,7 +92,7 @@ typedef struct
 	unsigned char spi_blk_rx_buf[ESP_SPI_BUF_SIZE];
 
 	unsigned char spi_tx_buf[ESP_SPI_MAX_PACK_SIZE];
-	unsigned char spi_rx_buf[ESP_SPI_MAX_PACK_SIZE];
+	unsigned char spi_rx_buf[ESP_SPI_MAX_PACK_SIZE];	// kolhoz or not kolhoz there is the point
 
 	struct workqueue_struct	* wq;
 	struct work_struct work;	// work to transmit or receive SPI data
@@ -96,8 +101,11 @@ typedef struct
 	int busy_gpio_irq;
 	//int timer_irq;
 
-	// // ESP network interfaces
+	// ESP network interfaces
 	struct net_device_ops 	ndops;
+	// Network queque to tx to SPI
+	struct sk_buff_head q_to_spi;
+	struct sk_buff * skb;
 }esp_t;
 
 // int esp_init(void);

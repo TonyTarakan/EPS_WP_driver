@@ -4,6 +4,8 @@ static esp_t esp;
 struct net_device * wifi_dev;
 struct net_device * mesh_dev;
 
+struct slip_proto esp_slip; // need to move to ram maybe? little bit kolhoz
+
 
 // Just catch interrupt and then process with work_handler
 static irqreturn_t esp_irq_handler(int irq, void * dev_id)
@@ -15,30 +17,71 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 	return IRQ_HANDLED;
 }
 
+
+// maybe one function can be used fo it?
+static void esp_net_mesh_setup(struct net_device * netdev) 
+{
+	netdev->netdev_ops = &(esp.ndops);
+	/* Point-to-Point TUN Device */
+	netdev->hard_header_len = 0;
+	netdev->addr_len = 0;
+	netdev->mtu = 200;
+	/* Zero header length */
+	netdev->type = ARPHRD_NONE;
+	netdev->flags = IFF_NOARP | IFF_MULTICAST;
+	netdev->tx_queue_len = 500;  /* We prefer our own queue length */
+}
 static void esp_net_setup(struct net_device * netdev) 
 {
 	netdev->netdev_ops = &(esp.ndops);
-	ether_setup(netdev);
+	/* Point-to-Point TUN Device */
+	netdev->hard_header_len = 0;
+	netdev->addr_len = 0;
+	netdev->mtu = 1500;
+	/* Zero header length */
+	netdev->type = ARPHRD_NONE;
+	netdev->flags = IFF_NOARP | IFF_MULTICAST;
+	netdev->tx_queue_len = 500;  /* We prefer our own queue length */
 }
+
+
 static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devaddr, int length) 
 {
 	memcpy(netdev->dev_addr, devaddr, length);
 }
 
+/*
+ * Netdev operations
+ */
 static int esp_net_start_tx(struct sk_buff * skb, struct net_device * netdev)
 { 
-	esp_net_priv_t * esp_priv = netdev_priv(netdev);
-
 	printk(KERN_INFO "esp_net_start_tx\n");
+
+	//esp_net_priv_t * esp_priv = netdev_priv(netdev);
 
 	// Add buffer processing to irq handling queue
 	// netif_stop_queue(netdev);	// MUST BE WAKED AFTER !!! (maybe after spi answer)
-	esp_priv->skb = skb;
+
+	// запихнуть данные в очередь
+
+	//esp_priv->skb = skb;
+
+	// Add buffer processing to irq handling queue
+	// netif_stop_queue(netdev);	// MUST BE WAKED AFTER !!! (maybe after spi answer)
+
+	// запихнуть данные в очередь
+	int i;
+	printk("enq: %d bytes: ", skb->len);
+	for(i = 0; i < (skb->len); i++)
+		printk("%02x ", (uint8_t)skb->data[i]);
+	printk("\n");
+
+	skb_queue_tail(&esp.q_to_spi, skb);
+
 	queue_work(esp.wq, &esp.work);
 
 	return NETDEV_TX_OK;
 }
-
 
 static int esp_net_open(struct net_device * netdev)
 {
@@ -46,18 +89,18 @@ static int esp_net_open(struct net_device * netdev)
 	printk(KERN_INFO "esp_net_open\n");
 
 	// GPIO irq registration
-	if(esp.data_gpio_irq != 0)
+	if(esp.data_gpio_irq > 0)
 	{
-		res = request_irq(esp.data_gpio_irq, esp_irq_handler, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "esp_data_gpio", NULL);
+		res = request_threaded_irq(esp.data_gpio_irq, esp_irq_handler, NULL, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "esp_data_gpio", NULL);
 		if(res < 0)
 		{
 			printk(KERN_ALERT "request_irq data_gpio_irq: %d\n", res);
 			return res;
 		}
 	}
-	if(esp.busy_gpio_irq != 0)
+	if(esp.busy_gpio_irq > 0)
 	{
-		res = request_irq(esp.busy_gpio_irq, esp_irq_handler, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "esp_busy_gpio", NULL);
+		res = request_threaded_irq(esp.busy_gpio_irq, esp_irq_handler, NULL, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "esp_busy_gpio", NULL);
 		if(res < 0)
 		{
 			printk(KERN_ALERT "request_irq busy_gpio_irq: %d\n", res);
@@ -65,7 +108,8 @@ static int esp_net_open(struct net_device * netdev)
 		}
 	}
 
-	netif_wake_queue(netdev); 
+
+	netif_wake_queue(netdev);  // for what ???
 
 	return 0; 
 }
@@ -77,6 +121,77 @@ static int esp_net_close(struct net_device * netdev)
 	printk(KERN_INFO "esp_net_close\n");
 	return 0; 
 }
+
+
+
+
+static int esp_spi_transfer(struct spi_device * spidev, unsigned char * rx_data, unsigned char * tx_data, int buf_length)
+{
+	int ret = 0;
+	struct spi_message mess;
+	struct spi_transfer transfer;
+
+	printk(KERN_INFO "spi_write_and_read\n");
+    printk(KERN_INFO "rx_data: %p\n", rx_data);
+
+	transfer.tx_buf	= tx_data;
+	transfer.rx_buf = rx_data;
+	transfer.len	= buf_length;
+
+	spi_message_init(&mess);
+	spi_message_add_tail(&transfer, &mess);
+
+	ret = spi_sync(spidev, &mess);
+	if (ret)
+	{
+		printk(KERN_ALERT "spi_sync: %d\n", ret);
+		return ret;
+	}
+
+    return ret;
+}
+
+static int esp_spi_read_data(unsigned char * spi_rx_buf)
+{
+    int ret = 0;
+    int total_read_len = 0;
+
+    printk(KERN_INFO "esp_spi_read_data\n");
+    
+    while(gpio_get_value(ESP_HAS_DATA_GPIO) != 0)
+    {
+        if(gpio_get_value(ESP_BUSY_GPIO) == 0)
+        {
+        	printk(KERN_INFO "esp_spi_read_data BUSY\n");
+            continue;
+        }
+
+        esp.spi_blk_tx_buf[0] = MASTER_READ_DATA_FROM_SLAVE_CMD;
+        esp.spi_blk_tx_buf[1] = 0;
+
+        ret = esp_spi_transfer(esp.spi_dev, esp.spi_blk_rx_buf, esp.spi_blk_tx_buf, ESP_SPI_BUF_SIZE);
+        if(ret >= 0)
+        {
+        	printk(KERN_INFO "SPI data: %s\n", esp.spi_blk_rx_buf);
+            memcpy(esp.spi_rx_buf + total_read_len, esp.spi_blk_rx_buf, 32);
+            total_read_len += 32;
+            // printk(KERN_INFO "SPI data: %d\n", total_read_len);
+        }
+    }
+    
+    // if(total_read_len >= read_packet_len)
+    // {
+    //     gateway_route((char *)read_buffer, read_packet_len);
+    // }
+    
+    return total_read_len;
+}
+
+void esp_phy_tx(struct sk_buff * skb)
+{
+	// TODO: send skb->data with skb->len to SPI
+}
+
 
 
 int esp_net_init(void)
@@ -104,7 +219,7 @@ int esp_net_init(void)
 		return res; 
 	}
 
-	mesh_dev = alloc_netdev(sizeof(esp_net_priv_t), "espmesh%d", esp_net_setup);
+	mesh_dev = alloc_netdev(sizeof(esp_net_priv_t), "espmesh%d", esp_net_mesh_setup);
 
 	// !!! hardcode
 	esp_net_mac_setup(mesh_dev, devaddr_mesh, 6);
@@ -118,11 +233,6 @@ int esp_net_init(void)
 	}
 
 	return 0;
-}
-
-esp_t * get_esp(void)
-{
-	return &esp;
 }
 
 static int esp_on(int prog)
@@ -278,14 +388,69 @@ static void esp_big_worker(struct work_struct * work)
 	int esp_busy;
 	int esp_has_data;
 
+	int spi_rx_len;
+	int spi_unesc_rx_len;
+
+	struct sk_buff * skb;
+	struct net_device * dev;
+
+	unsigned char * rx_buf = esp.spi_rx_buf;
+
 	printk(KERN_INFO "esp_big_worker\n");
 
 	esp_busy = gpio_get_value_cansleep(ESP_BUSY_GPIO);
-	printk(KERN_INFO "ESP_BUSY_GPIO = %d\n", esp_busy);
+	if(esp_busy == 0)
+	{
+		printk(KERN_INFO "ESP_BUSY_GPIO = %d\n", esp_busy);
+		return;
+	}
 
 	esp_has_data = gpio_get_value_cansleep(ESP_HAS_DATA_GPIO);
-	printk(KERN_INFO "ESP_HAS_DATA_GPIO = %d\n", esp_has_data);
+	if(esp_has_data)
+	{
+		////////////////////////////////////////////////////////////////////////////////////////
+		spi_rx_len = esp_spi_read_data(rx_buf);
+		spi_unesc_rx_len = slip_unesc(rx_buf, spi_rx_len);
+		if(spi_unesc_rx_len < 0)
+		{
+			printk(KERN_NOTICE "ESP received packet dropped\n");
+			return;
+		}
 
+		// HARDCODE
+		if(1)
+			dev = mesh_dev;
+		else
+			dev = wifi_dev;
+
+		skb = dev_alloc_skb(spi_unesc_rx_len);
+		if (!skb)
+		{
+			printk(KERN_NOTICE "ESP received packet dropped\n");
+			return;
+		}
+
+		memcpy(skb_put(skb, spi_unesc_rx_len), rx_buf, spi_unesc_rx_len);
+		skb->dev = dev;
+		skb->protocol = eth_type_trans(skb, dev);
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+		netif_rx(skb);
+		////////////////////////////////////////////////////////////////////////////////////////
+	}
+	//printk(KERN_INFO "ESP_HAS_DATA_GPIO = %d\n", esp_has_data);
+
+	int i;
+	if(!skb_queue_empty(&esp.q_to_spi))
+	{
+		skb = skb_dequeue(&esp.q_to_spi);
+		printk("deq: %d bytes: ", skb->len);
+		for(i = 0; i < (skb->len); i++)
+			printk("%02x ", (uint8_t)skb->data[i]);
+		printk("\n");
+
+		esp_phy_tx(skb);
+	}
 
 	
 
@@ -423,6 +588,12 @@ static int esp_spi_init(void)
 
 static int esp_wq_init(void)
 {
+	slip_proto_init(&esp_slip);
+
+	// skb queue
+	skb_queue_head_init(&esp.q_to_spi);
+
+	// workqueue
 	esp.wq = alloc_workqueue("esp_wq", WQ_FREEZABLE | WQ_MEM_RECLAIM, 0);
 	if (!(esp.wq))
 	{
@@ -434,84 +605,13 @@ static int esp_wq_init(void)
 }
 
 
-
-static int esp_spi_transfer(struct spi_device * spidev, unsigned char * rx_data, unsigned char * tx_data, int buf_length)
-{
-	int ret = 0;
-	struct spi_message mess;
-	struct spi_transfer transfer;
-
-	printk(KERN_INFO "spi_write_and_read\n");
-
-	printk(KERN_INFO "spidev: %p\n", spidev);
-    printk(KERN_INFO "rx_data: %p\n", rx_data);
-
-	transfer.tx_buf	= tx_data;
-	transfer.rx_buf = rx_data;
-	transfer.len	= buf_length;
-
-	spi_message_init(&mess);
-	spi_message_add_tail(&transfer, &mess);
-
-	ret = spi_sync(spidev, &mess);
-	if (ret)
-	{
-		printk(KERN_ALERT "spi_sync: %d\n", ret);
-		return ret;
-	}
-
-    return ret;
-}
-
-static int esp_spi_read_data(void)
-{
-    int ret = 0;
-    int total_read_len = 0;
-
-    printk(KERN_INFO "esp_spi_read_data\n");
-    printk(KERN_INFO "esp.spi: %p\n", esp.spi_dev);
-    
-    while(gpio_get_value(ESP_HAS_DATA_GPIO))
-    {
-        if(!gpio_get_value(ESP_BUSY_GPIO))
-        {
-            continue;
-        }
-
-        esp.spi_blk_tx_buf[0] = MASTER_READ_DATA_FROM_SLAVE_CMD;
-        esp.spi_blk_tx_buf[1] = 0;
-
-        ret = esp_spi_transfer(esp.spi_dev, esp.spi_blk_rx_buf, esp.spi_blk_tx_buf, ESP_SPI_BUF_SIZE);
-        if(ret >= 0)
-        {
-        	//printk(KERN_INFO "SPI data: %s\n", esp_priv->spi_blk_rx_buf);
-            //memcpy(esp_priv->spi_rx_buf + total_read_len, esp_priv->spi_blk_rx_buf, 32);
-            total_read_len += 32;
-            printk(KERN_INFO "SPI data: %d\n", total_read_len);
-        }
-    }
-    
-    // if(total_read_len >= read_packet_len)
-    // {
-    //     gateway_route((char *)read_buffer, read_packet_len);
-    // }
-    
-    return total_read_len;
-}
-
-
-
-void esp_phy_rx(void)
-{
-
-}
-
-
 static int esp_init(void)
 {
 	int res = 0;
 
 	esp.state = IS_OFF;
+	esp.data_gpio_irq = 0;
+	esp.busy_gpio_irq = 0;
 
 	mutex_init(&(esp.lock));
 
@@ -549,9 +649,6 @@ static int esp_init(void)
 		printk(KERN_ALERT "esp_net_init: %d\n", res);
 		return res;
 	}
-
-	esp.data_gpio_irq = 0;
-	esp.busy_gpio_irq = 0;
 
 	return 0;
 }
