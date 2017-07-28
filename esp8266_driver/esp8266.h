@@ -29,15 +29,16 @@
 //look at gpiolib.c by Sierra
 #define ESP_PWR_GPIO		SWIMCU_GPIO_TO_SYS(5)	// ESP_GPIO_ON GPIO39 //78
 #define ESP_PROG_GPIO		SWIMCU_GPIO_TO_SYS(4)	// ESP_GPIO_0  GPIO38
-#define ESP_BUSY_GPIO		78						// ESP_GPIO_5  GPIO33
+#define ESP_READY_GPIO		78						// ESP_GPIO_5  GPIO33
 #define ESP_HAS_DATA_GPIO	30						// ESP_GPIO_4  GPIO32
 
 #define ESP_SPI_BUS_NUM		0
 #define ESP_SPI_DEV_NUM		0
-#define ESP_SPI_MAX_SPEED	5000000
+#define ESP_SPI_MAX_SPEED	4800000
 
 #define ESP_SPI_BUF_HEAD_SIZE	2
-#define ESP_SPI_BUF_SIZE 		(ESP_SPI_BUF_HEAD_SIZE + 32) 
+#define ESP_SPI_BUF_DATA_SIZE	32
+#define ESP_SPI_BUF_SIZE 		(ESP_SPI_BUF_HEAD_SIZE + ESP_SPI_BUF_DATA_SIZE) 
 #define ESP_SPI_BUF_WORD_SIZE	((ESP_SPI_BUF_SIZE - ESP_SPI_BUF_HEAD_SIZE)/4)
 #define ESP_SPI_MAX_PACK_SIZE	2048
 
@@ -51,7 +52,8 @@
 #define ESP_CMD_RESET		"rst\n"
 #define ESP_CMD_PROG		"prog\n"
 #define ESP_MAX_CMD_LEN		10
-#define ESP_RST_WAIT_MS		3000
+#define ESP_RST_WAIT_MS		1000
+#define ESP_RST_WAIT1_MS	200
 
 #define ESP_UART_DEV		"/dev/ttyHS0"
 #define ESP_UART_MODE		0
@@ -98,7 +100,7 @@ typedef struct
 	struct work_struct work;	// work to transmit or receive SPI data
 
 	int data_gpio_irq;
-	int busy_gpio_irq;
+	int ready_gpio_irq;
 	//int timer_irq;
 
 	// ESP network interfaces
