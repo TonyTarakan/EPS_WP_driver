@@ -50,22 +50,8 @@ static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devadd
  */
 static int esp_net_start_tx(struct sk_buff * skb, struct net_device * netdev)
 { 
-	// printk(KERN_INFO "esp_net_start_tx\n");
-
-	// Add buffer processing to irq handling queue
-	// netif_stop_queue(netdev);	// MUST BE WAKED AFTER !!! (maybe after spi answer)
-
-	// запихнуть данные в очередь
-	// int i;
-	// printk("enq: %d bytes: ", skb->len);
-	// for(i = 0; i < (skb->len); i++)
-	// 	printk("%02x ", (uint8_t)skb->data[i]);
-	// printk("\n");
-
 	skb_queue_tail(&esp.q_to_spi, skb);
-
 	queue_work(esp.wq, &esp.work);
-
 	return NETDEV_TX_OK;
 }
 
@@ -94,9 +80,7 @@ static int esp_net_open(struct net_device * netdev)
 		}
 	}
 
-
 	netif_wake_queue(netdev);  // for what ???
-
 	return 0; 
 }
 
@@ -135,67 +119,110 @@ static int esp_spi_transfer(struct spi_device * spidev, unsigned char * tx_data,
 	if (ret)
 	{
 		printk(KERN_ALERT "spi_sync ERR: %d\n", ret);
-		return ret;
+		return ret; 
 	}
 	// else
 	// 	printk(KERN_INFO "spi_sync OK: %d\n", ret);
 
-    return ret;
+	return ret;
 }
 
-static int esp_spi_read_data(unsigned char * spi_rx_buf, int max_len)
+static int esp_spi_read_data(void)
 {
-    int ret = 0;
-    int total_read_len = 0;
+	int ret = 0;
+	int i;
+	int pos = 0;
 
-    // printk(KERN_INFO "esp_spi_read_data\n");
+	int j;
 
+	struct sk_buff * skb;
+	struct net_device * dev;
+	bool ready_to_replace = false;
 
-    
-    while(gpio_get_value_cansleep(ESP_HAS_DATA_GPIO) != 0)
-    {
-    	// printk(KERN_INFO "esp_spi HAS DATA\n");
-        if(gpio_get_value_cansleep(ESP_READY_GPIO) == 0)
-        {
-			// printk(KERN_INFO "esp_spi_read_data IS BUSY\n");
-            continue;
-        }
-        // else
-        // 	printk(KERN_INFO "esp_spi_read_data IS READY\n");
+	// printk(KERN_INFO "esp_spi_read_data\n");
+	
+	while(gpio_get_value_cansleep(ESP_HAS_DATA_GPIO) != 0)
+	{
+		if(gpio_get_value_cansleep(ESP_READY_GPIO) == 0) continue; // don't do anything if ESP is busy 
 
-        esp.spi_blk_tx_buf[0] = MASTER_READ_DATA_FROM_SLAVE_CMD;
-        esp.spi_blk_tx_buf[1] = 0;
+		esp.spi_blk_tx_buf[0] = MASTER_READ_DATA_FROM_SLAVE_CMD;
+		esp.spi_blk_tx_buf[1] = 0;
 
-        ret = esp_spi_transfer(esp.spi_dev, esp.spi_blk_tx_buf, esp.spi_blk_rx_buf, ESP_SPI_BUF_SIZE);
-        if(ret >= 0)
-        {
-        	// printk("SPI data: ");
-        	// for(j = ESP_SPI_BUF_HEAD_SIZE; j < ESP_SPI_BUF_SIZE; j++)
-        	// 	printk("%02x ", esp.spi_blk_rx_buf[j]);
-        	// printk("\n");
+		ret = esp_spi_transfer(esp.spi_dev, esp.spi_blk_tx_buf, esp.spi_blk_rx_buf, ESP_SPI_BUF_SIZE);
+		if(ret == 0)
+		{
+			for(i = ESP_SPI_BUF_HEAD_SIZE; i < ESP_SPI_BUF_SIZE; i++)
+			{
+				if(pos >= ESP_SPI_MAX_PACK_SIZE)
+				{
+					ready_to_replace = false;
+					printk("ESP RX buffer overflow");
+					return -ENOMEM;
+				}
 
-            memcpy(esp.spi_rx_buf + total_read_len, esp.spi_blk_rx_buf + ESP_SPI_BUF_HEAD_SIZE, ESP_SPI_BUF_DATA_SIZE);
-            
-            total_read_len += ESP_SPI_BUF_DATA_SIZE;
-            if(total_read_len >= max_len)
-            {
-            	printk("ESP RX buffer overflow");
-            	return -ENOMEM;
-            }
-            // printk(KERN_INFO "SPI data: %d\n", total_read_len);
-        }
-    }
-	// printk("SPI pack data: ");
-	// for(j = 0; j < total_read_len; j++)
-	// 	printk("%02x ", esp.spi_rx_buf[j]);
-	// printk("\n");
-    
-    // if(total_read_len >= read_packet_len)
-    // {
-    //     gateway_route((char *)read_buffer, read_packet_len);
-    // }
-    
-    return total_read_len;
+				if(esp.spi_blk_rx_buf[i] == SLIP_END)
+				{
+					if(pos > 4)
+					{
+						// HARDCODE
+						if(0)
+							dev = mesh_dev;
+						else
+							dev = wifi_dev;
+
+						skb = dev_alloc_skb(pos);
+						if (!skb)
+						{
+							printk(KERN_NOTICE "ESP received packet dropped (dev_alloc_skb)\n");
+							return -ENOMEM;
+						}
+
+						skb->dev = dev;
+						skb->pkt_type = PACKET_HOST;
+						skb->protocol = htons(ETH_P_IP);
+						skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+						memcpy(skb_put(skb, pos), esp.spi_rx_buf, pos);
+						netif_rx(skb);
+
+						break; // workaround if we have garbage in rx buffer
+					}
+
+					ready_to_replace = false;
+					pos = 0;
+				}
+				else if (esp.spi_blk_rx_buf[i] == SLIP_ESC)
+				{
+					ready_to_replace = true;
+				}
+				else if(ready_to_replace)
+				{
+					if(esp.spi_blk_rx_buf[i] == SLIP_ESC_END)
+					{
+						esp.spi_rx_buf[pos] = SLIP_END;
+					}
+					else if(esp.spi_blk_rx_buf[i] == SLIP_ESC_ESC)
+					{
+						esp.spi_rx_buf[pos] = SLIP_ESC;
+					}
+					else
+					{
+						printk(KERN_ALERT "slip_unesc middle ERROR: %02x\n", esp.spi_rx_buf[pos]);
+						return -EINVAL;
+					}
+					ready_to_replace = false;
+					pos++;
+				}
+				else
+				{
+					esp.spi_rx_buf[pos] = esp.spi_blk_rx_buf[i];
+					pos++;
+				}
+			}
+			// printk(KERN_INFO "SPI data: %d\n", total_read_len);
+		}
+	}
+	return ret;
 }
 
 void esp_spi_write_data(unsigned char * spi_tx_buf, int len)
@@ -203,8 +230,6 @@ void esp_spi_write_data(unsigned char * spi_tx_buf, int len)
 	// TODO: send skb->data with skb->len to SPI
 	int ret = 0;
 	int total_write_len = 0;
-
-	int j;
 
 	// printk(KERN_INFO "esp_spi_write_data\n");
 
@@ -302,19 +327,19 @@ static int esp_on(int prog)
 
 
 	// make SPI_CS high
-    esp.spi_dev->mode = SPI_MODE_3 | SPI_CS_HIGH;
-    // printk("esp FREQ = %d\n", esp.spi_dev->max_speed_hz);
-    ret = spi_setup(esp.spi_dev);
-    if(ret != 0)
-    {
-        printk(KERN_ALERT "Error spi setup SPI_CS high.\n");
-        return ret;
-    }
-    //////////////////////////////////////////////////////////
+	esp.spi_dev->mode = SPI_MODE_3 | SPI_CS_HIGH;
+	// printk("esp FREQ = %d\n", esp.spi_dev->max_speed_hz);
+	ret = spi_setup(esp.spi_dev);
+	if(ret != 0)
+	{
+		printk(KERN_ALERT "Error spi setup SPI_CS high.\n");
+		return ret;
+	}
+	//////////////////////////////////////////////////////////
 
-    // power OFF
-    gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
-    gpio_set_value_cansleep(ESP_PROG_GPIO, prog);
+	// power OFF
+	gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
+	gpio_set_value_cansleep(ESP_PROG_GPIO, prog);
 	msleep(ESP_RST_WAIT_MS);
 	// powen ON
  	gpio_set_value_cansleep(ESP_PWR_GPIO, 1);
@@ -332,10 +357,10 @@ static int esp_on(int prog)
 	}
 	//////////////////////////////////////////////////////////
 
-    if(prog)
-    	esp.state = IS_IN_PROG;
-    else
-    	esp.state = IS_ON;
+	if(prog)
+		esp.state = IS_IN_PROG;
+	else
+		esp.state = IS_ON;
 
 
 	return ret;
@@ -343,8 +368,8 @@ static int esp_on(int prog)
 
 static int esp_off(void)
 {
-    gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
-    esp.state = IS_OFF;
+	gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
+	esp.state = IS_OFF;
 	return 0;
 }
 
@@ -381,16 +406,16 @@ ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t 
 		if(ret != 0)
 			pr_info("ERROR ON\n");
 		else
-    		pr_info("ESP ON\n");
+			pr_info("ESP ON\n");
 	}
-    else if(memcmp(buf, ESP_CMD_OFF, len) == 0)
-    {
-    	ret = esp_off();
-    	if(ret != 0)
+	else if(memcmp(buf, ESP_CMD_OFF, len) == 0)
+	{
+		ret = esp_off();
+		if(ret != 0)
 			pr_info("ERROR OFF\n");
 		else
 			pr_info("ESP OFF\n");
-    }
+	}
 	else if(memcmp(buf, ESP_CMD_RESET, len) == 0)
 	{
 		ret = esp_off();
@@ -425,7 +450,7 @@ ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t 
 	}
 
 	kfree(cmd_buf);
-    return len;
+	return len;
 }
 
 
@@ -435,16 +460,9 @@ static void esp_big_worker(struct work_struct * work)
 	int esp_ready;
 	int esp_has_data;
 
-	int spi_rx_len;
-	int spi_unesc_rx_len;
 	int spi_esc_tx_len;
 
 	struct sk_buff * skb;
-	struct net_device * dev;
-
-	unsigned char * rx_buf = esp.spi_rx_buf;
-
-	int j;
 
 	// printk(KERN_INFO "esp_big_worker\n");
 
@@ -458,89 +476,18 @@ static void esp_big_worker(struct work_struct * work)
 	esp_has_data = gpio_get_value_cansleep(ESP_HAS_DATA_GPIO);
 	if(esp_has_data)
 	{
-		spi_rx_len = esp_spi_read_data(rx_buf, ESP_SPI_MAX_PACK_SIZE);
-		if(spi_rx_len <= 0)
+		int res = esp_spi_read_data();
+		if(res)
 		{
-			printk(KERN_NOTICE "ESP received packet dropped (esp_spi_read_data)\n");
+			printk(KERN_ALERT "esp_spi_read_data ERROR: %d\n", res);
 			return;
 		}
-
-		// printk("SPI   RAW     data: ");
-		// int j;
-		// for(j = 0; j < spi_rx_len; j++)
-		// {
-		// 	if(j%30 == 0)
-		// 		printk("\n");
-		// 	printk("%02x ", rx_buf[j]);
-		// }
-		// printk("\n");
-
-		spi_unesc_rx_len = slip_unstuff(rx_buf, spi_rx_len);
-		if(spi_unesc_rx_len <= 0)
-		{
-			printk(KERN_NOTICE "ESP received packet dropped (slip_unstuff)\n");
-			return;
-		}
-
-		// printk("SPI UNSTUFFED data: \n");
-		// for(j = 0; j < spi_unesc_rx_len; j++)
-		// {
-		// 	if(j%16 == 0)
-		// 		printk("\n");
-		// 	printk("%02x ", rx_buf[j]);
-		// }
-		// printk("\n");
-
-		skb = dev_alloc_skb(spi_unesc_rx_len);
-		if (!skb)
-		{
-			printk(KERN_NOTICE "ESP received packet dropped (dev_alloc_skb)\n");
-			return;
-		}
-
-		
-
-		// HARDCODE
-		if(0)
-			dev = mesh_dev;
-		else
-			dev = wifi_dev;
-
-		skb->dev = dev;
-		skb->pkt_type = PACKET_HOST;
-		skb->protocol = htons(ETH_P_IP);
-		skb->ip_summed = CHECKSUM_UNNECESSARY;
-
-		memcpy(skb_put(skb, spi_unesc_rx_len), rx_buf, spi_unesc_rx_len); //  do we need skb_put
-
-			// printk("skb->data FROM SPI:");
-			// for(j = 0; j < skb->len; j++)
-			// {
-			// 	if(j%64 == 0)
-			// 		printk("\n");
-			// 	printk("%02x ", skb->data[j]);
-			// }
-			// printk("\n");
-
-		netif_rx(skb);
 	}
 
 	if(!skb_queue_empty(&esp.q_to_spi))
 	{
-		// printk("WRKR skb queue not empty\n");
 		skb = skb_dequeue(&esp.q_to_spi);
-
-			// printk("skb->data   TO SPI:");
-			// for(j = 0; j < skb->len; j++)
-			// {
-			// 	if(j%64 == 0)
-			// 		printk("\n");
-			// 	printk("%02x ", skb->data[j]);
-			// }
-			// printk("\n");
-
 		spi_esc_tx_len = slip_stuff(skb->data, esp.spi_tx_buf, skb->len);
-
 		esp_spi_write_data(esp.spi_tx_buf, spi_esc_tx_len);
 	}
 }
@@ -551,7 +498,7 @@ static int esp_gpio_init(void)
 {
 	int res = 0;
 	// SPI data GPIOs
-    if(gpio_is_valid(ESP_READY_GPIO))
+	if(gpio_is_valid(ESP_READY_GPIO))
 	{
 		printk(KERN_INFO "esp_custom: ESP_READY_GPIO %d\n", ESP_READY_GPIO);
 
@@ -614,16 +561,16 @@ static int esp_gpio_init(void)
 
 	// Interrupt setup for RX data available
 	esp.data_gpio_irq = gpio_to_irq(ESP_HAS_DATA_GPIO);
-    if(esp.data_gpio_irq < 0)
-    {
+	if(esp.data_gpio_irq < 0)
+	{
 		printk(KERN_ALERT "data_gpio_irq: %d\n", esp.data_gpio_irq);
 		return esp.data_gpio_irq;
 	}
 	printk(KERN_INFO "data_gpio_irq: %d\n", esp.data_gpio_irq);
 	// Interrupt setup for change ready status
 	esp.ready_gpio_irq = gpio_to_irq(ESP_READY_GPIO);
-    if(esp.ready_gpio_irq < 0)
-    {
+	if(esp.ready_gpio_irq < 0)
+	{
 		printk(KERN_ALERT "ready_gpio_irq: %d\n", esp.ready_gpio_irq);
 		return esp.ready_gpio_irq;
 	}
@@ -639,10 +586,10 @@ static int esp_control_init(void)
 	esp.ctrl_fops.write		= on_esp_cmd_received;
 	esp.ctrl_fops.llseek 	= no_llseek;
 	esp.ctrl_dev.minor 		= MISC_DYNAMIC_MINOR;
-    esp.ctrl_dev.name 		= "esp8266_ctrl";
-    esp.ctrl_dev.fops 		= &(esp.ctrl_fops);
+	esp.ctrl_dev.name 		= "esp8266_ctrl";
+	esp.ctrl_dev.fops 		= &(esp.ctrl_fops);
 
-    res = misc_register(&(esp.ctrl_dev));
+	res = misc_register(&(esp.ctrl_dev));
 	if(res)
 	{
 		printk(KERN_ALERT "misc_register: %d\n", res); 
@@ -778,7 +725,7 @@ static int __init ktest_module_init(void)
 	}
 
 
-    printk( "ESP8266 under control\n" ); 
+	printk( "ESP8266 under control\n" ); 
 	return res;
 }
 
