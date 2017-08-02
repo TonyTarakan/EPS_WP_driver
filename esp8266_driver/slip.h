@@ -11,7 +11,6 @@
 static inline int slip_unstuff(unsigned char * input, int in_len)
 {
 	int i = 0;
-	int out_len = 0;
 	int pos = 0;
 	bool in_progress = false;
 
@@ -65,16 +64,16 @@ static inline int slip_unstuff(unsigned char * input, int in_len)
 		i++;
 	}
 
-	int j;
-	printk("FAILED UNSTUFFED data: \n");
-	for(j = 0; j < in_len; j++)
-	{
-		if(j%32 == 0)
-			printk("\n");
-		printk("%02x ", input[j]);
-	}
-	printk("\n");
-	printk(KERN_ALERT "slip_unesc end ERROR, length %d\n", in_len);
+	// int j;
+	// printk("FAILED UNSTUFFED data: \n");
+	// for(j = 0; j < in_len; j++)
+	// {
+	// 	if(j%32 == 0)
+	// 		printk("\n");
+	// 	printk("%02x ", input[j]);
+	// }
+	// printk("\n");
+	// printk(KERN_ALERT "slip_unesc end ERROR, length %d\n", in_len);
 	kfree(output);
 
 	return 0; // if we are here then it's error
