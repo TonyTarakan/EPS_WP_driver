@@ -3,7 +3,7 @@
 #
 # List of object file(s) to be built
 
-obj-m+=esp8266_custom.o
+obj-m+=esp8266_main.o
 
 #
 # Point to the directory containing sources for the kernel running on target
@@ -12,7 +12,7 @@ obj-m+=esp8266_custom.o
 #
 # Legato tools contain such a directory, point to it.
 
-KBUILD_DIR=~/WORK/AS100GW/tmptests/buildtest/test040717/yocto/build_bin/tmp/work/swi_mdm9x15-poky-linux-gnueabi/linux-yocto/3.14.29+gitAUTOINC+961ca71325_ab5094eade-r0.1/linux-swi_mdm9x15-standard-build
+KBUILD_DIR=~/WORK/AS100GW/tmptests/buildtest/test040717/yocto/build_bin/tmp/work/swi_mdm9x15-poky-linux-gnueabi/linux-yocto/3.14.29+gitAUTOINC+961ca71325_92fd54378a-r0.1/linux-swi_mdm9x15-standard-build
 
 export PATH:=$(PATH):/opt/swi/y17-ext/sysroots/x86_64-pokysdk-linux/usr/bin/arm-poky-linux-gnueabi
 #
