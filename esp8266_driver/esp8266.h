@@ -16,6 +16,8 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/if_arp.h>
+#include <linux/ip.h>
+#include <linux/socket.h>
 
 #include <linux/etherdevice.h>
 
@@ -40,7 +42,7 @@
 #define ESP_SPI_BUF_DATA_SIZE	32
 #define ESP_SPI_BUF_SIZE 		(ESP_SPI_BUF_HEAD_SIZE + ESP_SPI_BUF_DATA_SIZE) 
 #define ESP_SPI_BUF_WORD_SIZE	((ESP_SPI_BUF_SIZE - ESP_SPI_BUF_HEAD_SIZE)/4)
-#define ESP_SPI_MAX_PACK_SIZE	2048
+#define ESP_SPI_MAX_PACK_SIZE	3002 // 1500 * 2 + 2 for slip
 
 #define MASTER_WRITE_DATA_TO_SLAVE_CMD		2
 #define MASTER_READ_DATA_FROM_SLAVE_CMD		3

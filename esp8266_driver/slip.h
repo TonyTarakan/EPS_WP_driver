@@ -1,109 +1,114 @@
 #ifndef __SLIP_H
 #define __SLIP_H
 
-#define BUF_SIZE 1500
- /* two bytes each for a (pathological) max packet of escaped chars +  *
-  * terminating END char + initial END char                            */
-#define ENC_BUF_SIZE (2 * BUF_SIZE + 2)
-
 /* SLIP protocol characters. */
 #define SLIP_END             0300	// 0xC0		// indicates end of frame
 #define SLIP_ESC             0333	// 0xDB		// indicates byte stuffing
 #define SLIP_ESC_END         0334	// 0xDC		// ESC ESC_END means END 'data'
 #define SLIP_ESC_ESC         0335	// 0xDD		// ESC ESC_ESC means ESC 'data'
 
-static inline int slip_unesc(unsigned char * buf, int length)
+
+static inline int slip_unstuff(unsigned char * input, int in_len)
 {
-	int i = 1;
-	if(buf[0] != SLIP_END)
+	int i = 0;
+	int out_len = 0;
+	int pos = 0;
+	bool in_progress = false;
+
+	unsigned char * output = kmalloc(in_len, GFP_KERNEL);
+	if(output == NULL)
 	{
-		printk(KERN_ALERT "slip_unesc begin ERROR\n");
-		return -1;
+		printk(KERN_ALERT "slip_unesc ENOMEM\n");
+		return -ENOMEM;
 	}
 
-	while(i < length)
+	while(i < in_len)
 	{
-		if(buf[i] == SLIP_ESC)
+		if(input[i] == SLIP_END)
 		{
-			i++;
-			if(buf[i] == SLIP_ESC_END)
+			if(in_progress)
 			{
-				buf[i-1] = SLIP_END;
-				memcpy( &buf[i], &buf[i+1], length-(i+1) );
-				length--;
+				memcpy(input, output, pos);
+				kfree(output);
+				return pos;
 			}
-			else if(buf[i] == SLIP_ESC_ESC)
+			else
+				in_progress = true;
+		}
+		else if(in_progress)
+		{
+			if(input[i] == SLIP_ESC)
 			{
-				buf[i-1] = SLIP_ESC;
-				memcpy( &buf[i], &buf[i+1], length-(i+1) );
-				length--;
+				i++;
+				if(input[i] == SLIP_ESC_END)
+				{
+					output[pos] = SLIP_END;
+				}
+				else if(input[i] == SLIP_ESC_ESC)
+				{
+					output[pos] = SLIP_ESC;
+				}
+				else
+				{
+					printk(KERN_ALERT "slip_unesc middle ERROR\n");
+					kfree(output);
+					return 0;
+				}
+				pos++;
 			}
 			else
 			{
-				printk(KERN_ALERT "slip_unesc middle ERROR\n");
-				return -1;
+				output[pos] = input[i];
+				pos++;
 			}
-			break;
 		}
 		i++;
 	}
 
-	if(buf[i] != SLIP_END)
+	int j;
+	printk("FAILED UNSTUFFED data: \n");
+	for(j = 0; j < in_len; j++)
 	{
-		printk(KERN_ALERT "slip_unesc end ERROR\n");
-		return -1;
+		if(j%32 == 0)
+			printk("\n");
+		printk("%02x ", input[j]);
 	}
+	printk("\n");
+	printk(KERN_ALERT "slip_unesc end ERROR, length %d\n", in_len);
+	kfree(output);
 
-	return length - 2; // BEGIN and END bytes
+	return 0; // if we are here then it's error
 }
 
-static inline int slip_esc(unsigned char * s, unsigned char * d, int len)
+static inline int slip_stuff(unsigned char * src, unsigned char * dst, int len)
 {
-	unsigned char * ptr = d;
-	unsigned char c;
+    unsigned char * ptr = dst;
+    unsigned char c;
 
-	// Send an initial END character
-	*ptr++ = SLIP_END;
+    // Send an initial END character
+    *ptr++ = SLIP_END;
 
-	// For each byte in the packet, send the appropriate character sequence
-	while (len-- > 0)
-	{
-		switch(c = *s++)
-		{
-		case SLIP_END:
-			*ptr++ = SLIP_ESC;
-			*ptr++ = SLIP_ESC_END;
-			break;
-		case SLIP_ESC:
-			*ptr++ = SLIP_ESC;
-			*ptr++ = SLIP_ESC_ESC;
-			break;
-		default:
-			*ptr++ = c;
-			break;
-		}
-	}
-	*ptr++ = SLIP_END;
-	return (ptr - d);
+    // For each byte in the packet, send the appropriate character sequence
+    while (len-- > 0)
+    {
+        switch(c = *src++)
+        {
+        case SLIP_END:
+            *ptr++ = SLIP_ESC;
+            *ptr++ = SLIP_ESC_END;
+            break;
+        case SLIP_ESC:
+            *ptr++ = SLIP_ESC;
+            *ptr++ = SLIP_ESC_ESC;
+            break;
+        default:
+            *ptr++ = c;
+            break;
+        }
+    }
+    *ptr++ = SLIP_END;
+    return (ptr - dst);
 }
 
-struct slip_proto 
-{
-	unsigned char ibuf[ENC_BUF_SIZE];
-	unsigned char obuf[ENC_BUF_SIZE];
-	int pos;
-	int esc;
-};
-
-static inline void slip_proto_init(struct slip_proto * slip)
-{
-	memset(slip->ibuf, 0, sizeof(slip->ibuf));
-	memset(slip->obuf, 0, sizeof(slip->obuf));
-	slip->pos = 0;
-	slip->esc = 0;
-}
-
-// extern int slip_proto_read(int fd, void *buf, int len, struct slip_proto *slip);
-// extern int slip_proto_write(int fd, void *buf, int len, struct slip_proto *slip);
 
 #endif
