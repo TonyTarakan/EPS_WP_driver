@@ -96,13 +96,18 @@ typedef struct
 	unsigned char spi_blk_rx_buf[ESP_SPI_BUF_SIZE];
 
 	unsigned char spi_tx_buf[ESP_SPI_MAX_PACK_SIZE];
+
+	slip_t slip_context;	
 	unsigned char spi_rx_buf[ESP_SPI_MAX_PACK_SIZE];	// kolhoz or not kolhoz there is the point
 
 	struct workqueue_struct	* wq;
 	struct work_struct work;	// work to transmit or receive SPI data
 
 	int data_gpio_irq;
+	bool data_irq_captured;
 	int ready_gpio_irq;
+	bool ready_irq_captured;
+
 	//int timer_irq;
 
 	// ESP network interfaces
@@ -111,7 +116,3 @@ typedef struct
 	struct sk_buff_head q_to_spi;
 	struct sk_buff * skb;
 }esp_t;
-
-// int esp_init(void);
-// int esp_deinit(void);
-//ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t len, loff_t * ppos);
