@@ -33,7 +33,7 @@ static void esp_net_setup(struct net_device * netdev)
 	/* Point-to-Point TUN Device */
 	netdev->hard_header_len = 0;
 	netdev->addr_len = 0;
-	netdev->mtu = 1500;
+	netdev->mtu = 1200;
 	/* Zero header length */
 	netdev->type = ARPHRD_NONE;
 	netdev->flags = IFF_NOARP | IFF_MULTICAST;
@@ -50,6 +50,7 @@ static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devadd
  */
 static int esp_net_start_tx(struct sk_buff * skb, struct net_device * netdev)
 { 
+	printk(KERN_INFO "esp_net_start_tx\n");
 	skb_queue_tail(&esp.q_to_spi, skb);
 	queue_work(esp.wq, &esp.work);
 	return NETDEV_TX_OK;
@@ -141,16 +142,22 @@ static int data_route(slip_t * context)
 	int length = context->pos;
 
 	int j;
+	printk(KERN_NOTICE "Routing 2:\n");
+						for(j = 0; j < context->pos; j++)
+							printk("%02x ", context->output[j]);
+						printk("\n");
 
 	if((data[0] & 0xF0) == 0x40)
 	{
 		// IP routing
 		if((data[0] == 0x45) && (data[12] == 10))
 		{
+			printk(KERN_NOTICE "mesh_dev\n");
 			dev = mesh_dev;
 		}
 		else
 		{
+			printk(KERN_NOTICE "wifi_dev\n");
 			dev = wifi_dev;
 		}
 	}
@@ -166,9 +173,9 @@ static int data_route(slip_t * context)
 	else
 	{
 		printk(KERN_NOTICE "Routing unknown packet type: Packet dropped\n");
-		for(j = 0; j < length; j++)
-			printk("%02x ", data[j]);
-		printk("\n");
+		// for(j = 0; j < length; j++)
+		// 	printk("%02x ", data[j]);
+		// printk("\n");
 		return 0;
 	}
 		
@@ -184,6 +191,11 @@ static int data_route(slip_t * context)
 	skb->pkt_type = PACKET_HOST;
 	skb->protocol = htons(ETH_P_IP);
 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+		printk(KERN_NOTICE "SKBBBBB\n");
+		for(j = 0; j < length; j++)
+			printk("%02x ", data[j]);
+		printk("\n");
 
 	memcpy(skb_put(skb, length), data, length);
 	netif_rx(skb);
@@ -212,7 +224,10 @@ static int esp_spi_read_data(void)
 				//printk("dataroute before %p\n", data_route);
 				ret = slip_unstuff(&esp.slip_context, esp.spi_blk_rx_buf[i], route_callback);
 				if(ret)
+				{
+					printk(KERN_INFO "slip_unstuff: %d\n", ret);
 					return ret;
+				}
 			}
 			// printk(KERN_INFO "SPI data: %d\n", total_read_len);
 		}
@@ -459,6 +474,8 @@ static void esp_big_worker(struct work_struct * work)
 
 	struct sk_buff * skb;
 
+	int j;
+
 	// printk(KERN_INFO "esp_big_worker\n");
 
 	esp_ready = gpio_get_value_cansleep(ESP_READY_GPIO);
@@ -478,10 +495,15 @@ static void esp_big_worker(struct work_struct * work)
 			return;
 		}
 	}
-
-	if(!skb_queue_empty(&esp.q_to_spi))
+	else if(!skb_queue_empty(&esp.q_to_spi))
 	{
 		skb = skb_dequeue(&esp.q_to_spi);
+
+		printk(KERN_NOTICE "SKB ->>>\n");
+		for(j = 0; j < skb->len; j++)
+			printk("%02x ", skb->data[j]);
+		printk("\n");
+
 		spi_esc_tx_len = slip_stuff(skb->data, esp.spi_tx_buf, skb->len);
 		esp_spi_write_data(esp.spi_tx_buf, spi_esc_tx_len);
 	}
@@ -649,6 +671,7 @@ static int esp_init(void)
 	esp.ready_gpio_irq = 0;
 	esp.slip_context.maxlen = ESP_SPI_MAX_PACK_SIZE;
 	esp.slip_context.output = esp.spi_rx_buf;
+	esp.slip_context.pos = 0;
 
 	mutex_init(&(esp.lock));
 

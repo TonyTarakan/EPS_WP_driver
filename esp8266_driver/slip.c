@@ -3,6 +3,7 @@
 int slip_unstuff(slip_t * context, unsigned char input, int (*data_route)(slip_t * context))
 {
 	int res = 0;
+	int j;
 	if(context->pos >= context->maxlen)
 	{
 		context->pos = 0;
@@ -15,13 +16,18 @@ int slip_unstuff(slip_t * context, unsigned char input, int (*data_route)(slip_t
 	{
 		if(context->pos > 4)
 		{
-			context->pos++;
-			res = data_route(context);
-			if(res) return res;
-		}
+			//context->pos++;
+					printk(KERN_NOTICE "Routing 1:\n");
+					for(j = 0; j < context->pos; j++)
+						printk("%02x ", context->output[j]);
+					printk("\n");
 
+			res = data_route(context);
+		}
 		context->ready_to_replace = false;
 		context->pos = 0;
+
+		if(res) return res;
 	}
 	else if (input == SLIP_ESC)
 	{
@@ -40,6 +46,8 @@ int slip_unstuff(slip_t * context, unsigned char input, int (*data_route)(slip_t
 		else
 		{
 			printk(KERN_ALERT "slip_unesc middle ERROR: %02x\n", context->output[context->pos]);
+			context->ready_to_replace = false;
+			context->pos = 0;
 			return -EINVAL;
 		}
 		context->ready_to_replace = false;
