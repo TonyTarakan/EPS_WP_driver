@@ -54,7 +54,7 @@
 #define ESP_CMD_RESET		"rst\n"
 #define ESP_CMD_PROG		"prog\n"
 #define ESP_MAX_CMD_LEN		10
-#define ESP_RST_WAIT_MS		1000
+#define ESP_RST_WAIT_MS		1500
 #define ESP_RST_WAIT1_MS	200
 
 #define ESP_UART_DEV		"/dev/ttyHS0"
@@ -62,6 +62,8 @@
 
 #define ESP_BOOT_FLASH		0
 #define ESP_BOOT_UART		1
+
+#define ESP_MAX_MESH_NODES	512
 
 typedef enum esp_state
 {
@@ -86,6 +88,11 @@ typedef struct
 	struct file_operations	ctrl_fops;
 	struct miscdevice   	ctrl_dev;
 
+	// ESP connected IP's information
+	struct file_operations	ipinfo_fops;
+	struct miscdevice   	ipinfo_dev;
+	uint32_t ip_info_array[ESP_MAX_MESH_NODES];
+	uint16_t ip_info_nodes_count;
 
 	// ESP SPI
 	struct spi_master 		* master;

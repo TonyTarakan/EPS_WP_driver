@@ -33,7 +33,7 @@ static void esp_net_setup(struct net_device * netdev)
 	/* Point-to-Point TUN Device */
 	netdev->hard_header_len = 0;
 	netdev->addr_len = 0;
-	netdev->mtu = 1500;
+	netdev->mtu = 1200;
 	/* Zero header length */
 	netdev->type = ARPHRD_NONE;
 	netdev->flags = IFF_NOARP | IFF_MULTICAST;
@@ -157,18 +157,23 @@ static int data_route(slip_t * context)
 	else if (data[0] == 0x54)
 	{
 		// Routing table handling
-		printk(KERN_NOTICE "Routing table received\n");
+		memcpy(&esp.ip_info_nodes_count, &data[4], sizeof(esp.ip_info_nodes_count));
+		printk(KERN_NOTICE "Routing table received count = %d\n", esp.ip_info_nodes_count);
+
+		memcpy(esp.ip_info_array, &data[7], esp.ip_info_nodes_count*4);
+
 		for(j = 0; j < length; j++)
 			printk("%02x ", data[j]);
 		printk("\n");
+
 		return 0;
 	}
 	else
 	{
-		printk(KERN_NOTICE "Routing unknown packet type: Packet dropped\n");
-		for(j = 0; j < length; j++)
-			printk("%02x ", data[j]);
-		printk("\n");
+		// printk(KERN_NOTICE "Routing unknown packet type: Packet dropped\n");
+		// for(j = 0; j < length; j++)
+		// 	printk("%02x ", data[j]);
+		// printk("\n");
 		return 0;
 	}
 		
@@ -212,7 +217,10 @@ static int esp_spi_read_data(void)
 				//printk("dataroute before %p\n", data_route);
 				ret = slip_unstuff(&esp.slip_context, esp.spi_blk_rx_buf[i], route_callback);
 				if(ret)
+				{
+					printk(KERN_INFO "slip_unstuff: %d\n", ret);
 					return ret;
+				}
 			}
 			// printk(KERN_INFO "SPI data: %d\n", total_read_len);
 		}
@@ -449,6 +457,23 @@ ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t 
 	return len;
 }
 
+ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
+{
+	int count = esp.ip_info_nodes_count;
+	int i;
+
+	//memcpy(buf, esp.ip_info_array, 4*count);
+
+	for(i = 0; i < count; i++)
+		sprintf(buf+9*i, "%08x ", esp.ip_info_array[i]);
+
+	sprintf(buf+9*i, "\r\n");
+	//sprintf(buf++, -1);
+	//printk(KERN_INFO "len = %d\n", len);
+
+	return 9*i+2;
+}
+
 
 static void esp_big_worker(struct work_struct * work)
 {
@@ -458,6 +483,8 @@ static void esp_big_worker(struct work_struct * work)
 	int spi_esc_tx_len;
 
 	struct sk_buff * skb;
+
+	int j;
 
 	// printk(KERN_INFO "esp_big_worker\n");
 
@@ -478,8 +505,7 @@ static void esp_big_worker(struct work_struct * work)
 			return;
 		}
 	}
-
-	if(!skb_queue_empty(&esp.q_to_spi))
+	else if(!skb_queue_empty(&esp.q_to_spi))
 	{
 		skb = skb_dequeue(&esp.q_to_spi);
 		spi_esc_tx_len = slip_stuff(skb->data, esp.spi_tx_buf, skb->len);
@@ -596,6 +622,31 @@ static int esp_control_init(void)
 	return 0;
 }
 
+static int esp_ipinfo_init(void)
+{
+	int res;
+	esp.ip_info_nodes_count = 0;
+	// for(res = 1; res < 11; res++)
+	// {
+	// 	esp.ip_info_array[res-1] = res*256*256*256+res*256*256+res*256+res+1;
+	// }
+
+	esp.ipinfo_fops.owner 	= THIS_MODULE;
+	esp.ipinfo_fops.read	= on_esp_ipinfo_read;
+	esp.ipinfo_fops.llseek 	= no_llseek;
+	esp.ipinfo_dev.minor 	= MISC_DYNAMIC_MINOR;
+	esp.ipinfo_dev.name 	= "esp8266_ipinfo";
+	esp.ipinfo_dev.fops 	= &(esp.ipinfo_fops);
+
+	res = misc_register(&(esp.ipinfo_dev));
+	if(res)
+	{
+		printk(KERN_ALERT "ipinfo_register: %d\n", res); 
+		return res; 
+	}
+	return 0;
+}
+
 static int esp_spi_init(void)
 {
 	esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
@@ -649,6 +700,7 @@ static int esp_init(void)
 	esp.ready_gpio_irq = 0;
 	esp.slip_context.maxlen = ESP_SPI_MAX_PACK_SIZE;
 	esp.slip_context.output = esp.spi_rx_buf;
+	esp.slip_context.pos = 0;
 
 	mutex_init(&(esp.lock));
 
@@ -663,6 +715,13 @@ static int esp_init(void)
 	if(res)
 	{
 		printk(KERN_ALERT "esp_control_init: %d\n", res);
+		return res;
+	}
+
+	res = esp_ipinfo_init();
+	if(res)
+	{
+		printk(KERN_ALERT "esp_ipinfo_init: %d\n", res);
 		return res;
 	}
 
@@ -693,7 +752,9 @@ static int esp_init(void)
 static void esp_deinit(void)
 {
 	spi_unregister_device(esp.spi_dev);
+
 	misc_deregister(&(esp.ctrl_dev));
+	misc_deregister(&(esp.ipinfo_dev));
 
 	esp_net_close(wifi_dev);
 	unregister_netdev(wifi_dev);
@@ -706,6 +767,7 @@ static void esp_deinit(void)
 	destroy_workqueue(esp.wq);
 
 	esp_off();
+
 	// if(esp.data_gpio_irq > 0) free_irq(esp.data_gpio_irq, NULL);
 	// if(esp.ready_gpio_irq > 0) free_irq(esp.ready_gpio_irq, NULL);
 	gpio_free(ESP_PROG_GPIO);
