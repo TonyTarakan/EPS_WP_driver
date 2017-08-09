@@ -3,8 +3,8 @@
 #
 # List of object file(s) to be built
 
-obj-m+=esp8266_custom.o
-
+obj-m+=esp8266.o
+esp8266-y := esp8266_main.o slip.o
 #
 # Point to the directory containing sources for the kernel running on target
 # system. The kernel directory must have the configuration build step executed,
