@@ -16,12 +16,6 @@ int slip_unstuff(slip_t * context, unsigned char input, int (*data_route)(slip_t
 	{
 		if(context->pos > 4)
 		{
-			//context->pos++;
-					printk(KERN_NOTICE "Routing 1:\n");
-					for(j = 0; j < context->pos; j++)
-						printk("%02x ", context->output[j]);
-					printk("\n");
-
 			res = data_route(context);
 		}
 		context->ready_to_replace = false;

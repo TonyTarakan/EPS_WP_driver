@@ -12,7 +12,7 @@ esp8266-y := esp8266_main.o slip.o
 #
 # Legato tools contain such a directory, point to it.
 
-KBUILD_DIR=~/WORK/AS100GW/tmptests/buildtest/test040717/yocto/build_bin/tmp/work/swi_mdm9x15-poky-linux-gnueabi/linux-yocto/3.14.29+gitAUTOINC+961ca71325_c5c4799b18-r0.1/linux-swi_mdm9x15-standard-build
+KBUILD_DIR=~/WORK/AS100GW/tmptests/buildtest/test040717/yocto/build_bin/tmp/work/swi_mdm9x15-poky-linux-gnueabi/linux-yocto/3.14.29+gitAUTOINC+961ca71325_ab5094eade-r0.1/linux-swi_mdm9x15-standard-build
 
 export PATH:=$(PATH):/opt/swi/y17-ext/sysroots/x86_64-pokysdk-linux/usr/bin/arm-poky-linux-gnueabi
 #
