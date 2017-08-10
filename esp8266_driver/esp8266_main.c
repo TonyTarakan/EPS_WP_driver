@@ -5,10 +5,11 @@ struct net_device * wifi_dev;
 struct net_device * mesh_dev;
 
 
-// Just catch interrupt and then process with work_handler
+/*
+ * GPIO interrupt handler. Just catch interrupt and then process with work_handler
+ */
 static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 {
-	// printk(KERN_INFO "esp_irq_handler\n");
 	queue_work(esp.wq, &(esp.work));
 	return IRQ_HANDLED;
 }
@@ -17,27 +18,23 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 // maybe one function can be used fo it?
 static void esp_net_mesh_setup(struct net_device * netdev) 
 {
-	netdev->netdev_ops = &(esp.ndops);
-	/* Point-to-Point TUN Device */
-	netdev->hard_header_len = 0;
-	netdev->addr_len = 0;
-	netdev->mtu = 200;
-	/* Zero header length */
-	netdev->type = ARPHRD_NONE;
-	netdev->flags = IFF_NOARP | IFF_MULTICAST;
-	netdev->tx_queue_len = 500;  /* We prefer our own queue length */
+	netdev->netdev_ops		= &(esp.ndops);
+	netdev->hard_header_len	= 0;
+	netdev->addr_len		= 0;
+	netdev->mtu 			= 200;
+	netdev->type 			= ARPHRD_NONE;
+	netdev->flags 			= IFF_NOARP | IFF_MULTICAST;
+	netdev->tx_queue_len	= 500;  /* We prefer our own queue length */
 }
 static void esp_net_setup(struct net_device * netdev) 
 {
-	netdev->netdev_ops = &(esp.ndops);
-	/* Point-to-Point TUN Device */
-	netdev->hard_header_len = 0;
-	netdev->addr_len = 0;
-	netdev->mtu = 1200;
-	/* Zero header length */
-	netdev->type = ARPHRD_NONE;
-	netdev->flags = IFF_NOARP | IFF_MULTICAST;
-	netdev->tx_queue_len = 500;  /* We prefer our own queue length */
+	netdev->netdev_ops 		= &(esp.ndops);
+	netdev->hard_header_len	= 0;
+	netdev->addr_len 		= 0;
+	netdev->mtu 			= 1200;
+	netdev->type 			= ARPHRD_NONE;
+	netdev->flags 			= IFF_NOARP | IFF_MULTICAST;
+	netdev->tx_queue_len 	= 500;  /* We prefer our own queue length */
 }
 static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devaddr, int length) 
 {
@@ -45,7 +42,7 @@ static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devadd
 }
 
 
-/*
+/**
  * Netdev operations
  */
 static int esp_net_start_tx(struct sk_buff * skb, struct net_device * netdev)
@@ -272,7 +269,6 @@ int esp_net_init(void)
 	int res;
 	unsigned char devaddr_mesh[6] = {0xE5, 0x82, 0x66, 0x11, 0x1E, 0x5F};
 	unsigned char devaddr_wifi[6] = {0xE5, 0x82, 0x66, 0x11, 0x11, 0xF1};
-
 
 	esp.ndops.ndo_open 			= esp_net_open;
 	esp.ndops.ndo_stop 			= esp_net_close;
@@ -768,8 +764,6 @@ static void esp_deinit(void)
 
 	esp_off();
 
-	// if(esp.data_gpio_irq > 0) free_irq(esp.data_gpio_irq, NULL);
-	// if(esp.ready_gpio_irq > 0) free_irq(esp.ready_gpio_irq, NULL);
 	gpio_free(ESP_PROG_GPIO);
 	gpio_free(ESP_PWR_GPIO);
 	gpio_free(ESP_READY_GPIO);
