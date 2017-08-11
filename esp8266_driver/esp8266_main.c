@@ -5,10 +5,11 @@ struct net_device * wifi_dev;
 struct net_device * mesh_dev;
 
 
-// Just catch interrupt and then process with work_handler
+/*
+ * GPIO interrupt handler. Just catch interrupt and then process with work_handler
+ */
 static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 {
-	// printk(KERN_INFO "esp_irq_handler\n");
 	queue_work(esp.wq, &(esp.work));
 	return IRQ_HANDLED;
 }
@@ -17,27 +18,23 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 // maybe one function can be used fo it?
 static void esp_net_mesh_setup(struct net_device * netdev) 
 {
-	netdev->netdev_ops = &(esp.ndops);
-	/* Point-to-Point TUN Device */
-	netdev->hard_header_len = 0;
-	netdev->addr_len = 0;
-	netdev->mtu = 200;
-	/* Zero header length */
-	netdev->type = ARPHRD_NONE;
-	netdev->flags = IFF_NOARP | IFF_MULTICAST;
-	netdev->tx_queue_len = 500;  /* We prefer our own queue length */
+	netdev->netdev_ops		= &(esp.ndops);
+	netdev->hard_header_len	= 0;
+	netdev->addr_len		= 0;
+	netdev->mtu 			= 200;
+	netdev->type 			= ARPHRD_NONE;
+	netdev->flags 			= IFF_NOARP | IFF_MULTICAST;
+	netdev->tx_queue_len	= 500;  /* We prefer our own queue length */
 }
 static void esp_net_setup(struct net_device * netdev) 
 {
-	netdev->netdev_ops = &(esp.ndops);
-	/* Point-to-Point TUN Device */
-	netdev->hard_header_len = 0;
-	netdev->addr_len = 0;
-	netdev->mtu = 1200;
-	/* Zero header length */
-	netdev->type = ARPHRD_NONE;
-	netdev->flags = IFF_NOARP | IFF_MULTICAST;
-	netdev->tx_queue_len = 500;  /* We prefer our own queue length */
+	netdev->netdev_ops 		= &(esp.ndops);
+	netdev->hard_header_len	= 0;
+	netdev->addr_len 		= 0;
+	netdev->mtu 			= 1200;
+	netdev->type 			= ARPHRD_NONE;
+	netdev->flags 			= IFF_NOARP | IFF_MULTICAST;
+	netdev->tx_queue_len 	= 500;  /* We prefer our own queue length */
 }
 static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devaddr, int length) 
 {
@@ -45,20 +42,22 @@ static void esp_net_mac_setup(struct net_device * netdev, unsigned char * devadd
 }
 
 
-/*
+/**
  * Netdev operations
  */
 static int esp_net_start_tx(struct sk_buff * skb, struct net_device * netdev)
 { 
 	skb_queue_tail(&esp.q_to_spi, skb);
 	queue_work(esp.wq, &esp.work);
+	netdev->stats.tx_bytes += skb->len;
+	netdev->stats.tx_packets++;
 	return NETDEV_TX_OK;
 }
 
 static int esp_net_open(struct net_device * netdev)
 {
 	int res;
-	printk(KERN_INFO "esp_net_open\n");
+	pr_info("esp_net_open\n");
 
 	// GPIO irq registration
 	if(!esp.data_irq_captured) 
@@ -66,7 +65,7 @@ static int esp_net_open(struct net_device * netdev)
 		res = request_threaded_irq(esp.data_gpio_irq, esp_irq_handler, NULL, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "esp_data_gpio", NULL);
 		if(res < 0)
 		{
-			printk(KERN_ALERT "request_irq data_gpio_irq: %d\n", res);
+			pr_alert("request_irq data_gpio_irq: %d\n", res);
 			return res;
 		}
 		esp.data_irq_captured = true;
@@ -76,7 +75,7 @@ static int esp_net_open(struct net_device * netdev)
 		res = request_threaded_irq(esp.ready_gpio_irq, esp_irq_handler, NULL, (IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING), "esp_ready_gpio", NULL);
 		if(res < 0)
 		{
-			printk(KERN_ALERT "request_irq ready_gpio_irq: %d\n", res);
+			pr_alert("request_irq ready_gpio_irq: %d\n", res);
 			return res;
 		}
 		esp.ready_irq_captured = true;
@@ -98,7 +97,7 @@ static int esp_net_close(struct net_device * netdev)
 		free_irq(esp.ready_gpio_irq, NULL);
 		esp.ready_irq_captured = false;
 	}
-	printk(KERN_INFO "esp_net_close\n");
+	pr_info("esp_net_close\n");
 	return 0; 
 }
 
@@ -113,8 +112,6 @@ static int esp_spi_transfer(struct spi_device * spidev, unsigned char * tx_data,
 
 	memset(&transfer, 0, sizeof(struct spi_transfer));
 
-	// printk(KERN_INFO "esp_spi_transfer\n");
-
 	transfer.tx_buf	= tx_data;
 	transfer.rx_buf = rx_data;
 	transfer.len	= buf_length;
@@ -125,7 +122,7 @@ static int esp_spi_transfer(struct spi_device * spidev, unsigned char * tx_data,
 	ret = spi_sync(spidev, &mess);
 	if (ret)
 	{
-		printk(KERN_ALERT "spi_sync ERR: %d\n", ret);
+		pr_alert("spi_sync ERR: %d\n", ret);
 		return ret; 
 	}
 
@@ -139,8 +136,6 @@ static int data_route(slip_t * context)
 
 	unsigned char * data = context->output;
 	int length = context->pos;
-
-	int j;
 
 	if((data[0] & 0xF0) == 0x40)
 	{
@@ -158,30 +153,25 @@ static int data_route(slip_t * context)
 	{
 		// Routing table handling
 		memcpy(&esp.ip_info_nodes_count, &data[4], sizeof(esp.ip_info_nodes_count));
-		printk(KERN_NOTICE "Routing table received count = %d\n", esp.ip_info_nodes_count);
+
+		if(esp.ip_info_nodes_count > ESP_MAX_MESH_NODES) return -EINVAL;
 
 		memcpy(esp.ip_info_array, &data[7], esp.ip_info_nodes_count*4);
-
-		for(j = 0; j < length; j++)
-			printk("%02x ", data[j]);
-		printk("\n");
-
 		return 0;
 	}
 	else
 	{
-		// printk(KERN_NOTICE "Routing unknown packet type: Packet dropped\n");
+		// pr_info("Routing unknown packet type: Packet dropped\n");
 		// for(j = 0; j < length; j++)
 		// 	printk("%02x ", data[j]);
 		// printk("\n");
 		return 0;
 	}
-		
 
 	skb = dev_alloc_skb(length);
 	if (!skb)
 	{
-		printk(KERN_NOTICE "ESP received packet dropped (dev_alloc_skb)\n");
+		pr_info("ESP received packet dropped (dev_alloc_skb)\n");
 		return -ENOMEM;
 	}
 
@@ -192,6 +182,8 @@ static int data_route(slip_t * context)
 
 	memcpy(skb_put(skb, length), data, length);
 	netif_rx(skb);
+	dev->stats.rx_packets++;
+	dev->stats.rx_bytes += length;
 	return 0;
 }
 
@@ -218,11 +210,11 @@ static int esp_spi_read_data(void)
 				ret = slip_unstuff(&esp.slip_context, esp.spi_blk_rx_buf[i], route_callback);
 				if(ret)
 				{
-					printk(KERN_INFO "slip_unstuff: %d\n", ret);
+					pr_info("slip_unstuff: %d\n", ret);
 					return ret;
 				}
 			}
-			// printk(KERN_INFO "SPI data: %d\n", total_read_len);
+			// pr_info("SPI data: %d\n", total_read_len);
 		}
 	}
 
@@ -235,18 +227,18 @@ void esp_spi_write_data(unsigned char * spi_tx_buf, int len)
 	int ret = 0;
 	int total_write_len = 0;
 
-	// printk(KERN_INFO "esp_spi_write_data\n");
+	// pr_info("esp_spi_write_data\n");
 
 	while(total_write_len < len)
 	{
-		// printk(KERN_INFO "esp_spi HAS DATA\n");
+		// pr_info("esp_spi HAS DATA\n");
 		if(gpio_get_value_cansleep(ESP_READY_GPIO) == 0)
 		{
-			// printk(KERN_INFO "esp_spi_write_data IS BUSY\n");
+			// pr_info("esp_spi_write_data IS BUSY\n");
 			continue;
 		}
 		// else
-		// 	printk(KERN_INFO "esp_spi_write_data IS READY\n");
+		// 	pr_info("esp_spi_write_data IS READY\n");
 
 		esp.spi_blk_tx_buf[0] = MASTER_WRITE_DATA_TO_SLAVE_CMD;
 		esp.spi_blk_tx_buf[1] = 0;
@@ -273,7 +265,6 @@ int esp_net_init(void)
 	unsigned char devaddr_mesh[6] = {0xE5, 0x82, 0x66, 0x11, 0x1E, 0x5F};
 	unsigned char devaddr_wifi[6] = {0xE5, 0x82, 0x66, 0x11, 0x11, 0xF1};
 
-
 	esp.ndops.ndo_open 			= esp_net_open;
 	esp.ndops.ndo_stop 			= esp_net_close;
 	esp.ndops.ndo_start_xmit 	= esp_net_start_tx;
@@ -287,7 +278,7 @@ int esp_net_init(void)
 	res = register_netdev(wifi_dev);
 	if(res != 0)
 	{
-		printk(KERN_INFO "Failed to register wifi interface\n" ); 
+		pr_info("Failed to register wifi interface\n" ); 
 		free_netdev(wifi_dev);
 		return res; 
 	}
@@ -300,7 +291,7 @@ int esp_net_init(void)
 	res = register_netdev(mesh_dev);
 	if(res != 0)
 	{
-		printk(KERN_INFO "Failed to register mesh interface\n" ); 
+		pr_info("Failed to register mesh interface\n" ); 
 		free_netdev(mesh_dev);
 		return res; 
 	}
@@ -322,7 +313,7 @@ static int esp_on(int prog)
 	f_esp_uart = filp_open(ESP_UART_DEV, O_RDWR, ESP_UART_MODE);
 	if(IS_ERR_OR_NULL(f_esp_uart)) 
 	{
-		printk(KERN_ALERT "Error while trying to open %s: %p\n", ESP_UART_DEV, f_esp_uart);
+		pr_alert("Error while trying to open %s: %p\n", ESP_UART_DEV, f_esp_uart);
 		return -EBADFD;
 	}
 	filp_close(f_esp_uart, NULL);
@@ -336,7 +327,7 @@ static int esp_on(int prog)
 	ret = spi_setup(esp.spi_dev);
 	if(ret != 0)
 	{
-		printk(KERN_ALERT "Error spi setup SPI_CS high.\n");
+		pr_alert("Error spi setup SPI_CS high.\n");
 		return ret;
 	}
 	//////////////////////////////////////////////////////////
@@ -356,16 +347,9 @@ static int esp_on(int prog)
 	// printk("esp FREQ 2 = %d\n", esp.spi_dev->max_speed_hz);
 	if(ret != 0)
 	{
-		printk(KERN_ALERT "Error spi setup SPI_CS low.\n");
+		pr_alert("Error spi setup SPI_CS low.\n");
 		return ret;
 	}
-	//////////////////////////////////////////////////////////
-
-	if(prog)
-		esp.state = IS_IN_PROG;
-	else
-		esp.state = IS_ON;
-
 
 	return ret;
 }
@@ -373,11 +357,10 @@ static int esp_on(int prog)
 static int esp_off(void)
 {
 	gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
-	esp.state = IS_OFF;
 	return 0;
 }
 
-ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t len, loff_t * ppos)
+static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t len, loff_t * ppos)
 {
 	ssize_t ret;
 	void * cmd_buf;
@@ -401,11 +384,6 @@ ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t 
 
 	if(memcmp(buf, ESP_CMD_ON, len) == 0)
 	{
-		// char * eer = "dfsafasdfa";
-		// spi_write(esp.spi_dev, eer, 10);
-
-
-
 		ret = esp_on(ESP_BOOT_FLASH);
 		if(ret != 0)
 			pr_info("ERROR ON\n");
@@ -457,7 +435,7 @@ ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, size_t 
 	return len;
 }
 
-ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
+static ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
 {
 	int count = esp.ip_info_nodes_count;
 	int i;
@@ -469,9 +447,14 @@ ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, lo
 
 	sprintf(buf+9*i, "\r\n");
 	//sprintf(buf++, -1);
-	//printk(KERN_INFO "len = %d\n", len);
+	//pr_info("len = %d\n", len);
 
 	return 9*i+2;
+}
+
+static void on_esp_timer( unsigned long data )
+{
+	queue_work(esp.wq, &(esp.work));
 }
 
 
@@ -479,19 +462,14 @@ static void esp_big_worker(struct work_struct * work)
 {
 	int esp_ready;
 	int esp_has_data;
-
 	int spi_esc_tx_len;
-
 	struct sk_buff * skb;
 
-	int j;
-
-	// printk(KERN_INFO "esp_big_worker\n");
+	mod_timer(&esp.hang_timer, jiffies + msecs_to_jiffies(ESP_TIMER_PERIOD_MS));
 
 	esp_ready = gpio_get_value_cansleep(ESP_READY_GPIO);
 	if(esp_ready == 0)
 	{
-		// printk(KERN_INFO "ESP_READY_GPIO = %d\n", esp_ready);
 		return;
 	}
 
@@ -501,7 +479,7 @@ static void esp_big_worker(struct work_struct * work)
 		int res = esp_spi_read_data();
 		if(res)
 		{
-			printk(KERN_ALERT "esp_spi_read_data ERROR: %d\n", res);
+			pr_alert("esp_spi_read_data ERROR: %d\n", res);
 			return;
 		}
 	}
@@ -510,6 +488,7 @@ static void esp_big_worker(struct work_struct * work)
 		skb = skb_dequeue(&esp.q_to_spi);
 		spi_esc_tx_len = slip_stuff(skb->data, esp.spi_tx_buf, skb->len);
 		esp_spi_write_data(esp.spi_tx_buf, spi_esc_tx_len);
+		dev_kfree_skb(skb);
 	}
 }
 
@@ -521,7 +500,7 @@ static int esp_gpio_init(void)
 	// SPI data GPIOs
 	if(gpio_is_valid(ESP_READY_GPIO))
 	{
-		printk(KERN_INFO "esp_custom: ESP_READY_GPIO %d\n", ESP_READY_GPIO);
+		pr_info("esp_custom: ESP_READY_GPIO %d\n", ESP_READY_GPIO);
 
 		res = gpio_request(ESP_READY_GPIO, "ESP_READY");
 		if(res < 0) return res;
@@ -530,13 +509,13 @@ static int esp_gpio_init(void)
 	}
 	else
 	{
-		printk(KERN_ALERT "esp_custom: invalid GPIO%d\n", ESP_READY_GPIO);
+		pr_alert("esp_custom: invalid GPIO%d\n", ESP_READY_GPIO);
 		return -EINVAL;
 	}
 	
 	if(gpio_is_valid(ESP_HAS_DATA_GPIO))
 	{
-		printk(KERN_INFO "esp_custom: ESP_HAS_DATA_GPIO %d\n", ESP_HAS_DATA_GPIO);
+		pr_info("esp_custom: ESP_HAS_DATA_GPIO %d\n", ESP_HAS_DATA_GPIO);
 
 		res = gpio_request(ESP_HAS_DATA_GPIO, "ESP_HAS_DATA_GPIO");
 		if(res < 0) return res;
@@ -545,13 +524,13 @@ static int esp_gpio_init(void)
 	}
 	else
 	{
-		printk(KERN_ALERT "esp_custom: invalid GPIO%d\n", ESP_HAS_DATA_GPIO);
+		pr_alert("esp_custom: invalid GPIO%d\n", ESP_HAS_DATA_GPIO);
 		return -EINVAL;
 	}
 
 	if(gpio_is_valid(ESP_PROG_GPIO))
 	{
-		printk("esp_custom: ESP_PROG_GPIO %d\n", ESP_PROG_GPIO);
+		pr_info("esp_custom: ESP_PROG_GPIO %d\n", ESP_PROG_GPIO);
 
 		res = gpio_request(ESP_PROG_GPIO, "ESP_RST");
 		if(res < 0) return res;
@@ -560,13 +539,13 @@ static int esp_gpio_init(void)
 	}
 	else
 	{
-		printk("esp_custom: invalid GPIO%d\n", ESP_PROG_GPIO);
+		pr_alert("esp_custom: invalid GPIO%d\n", ESP_PROG_GPIO);
 		return -EINVAL;
 	}
 	
 	if(gpio_is_valid(ESP_PWR_GPIO))
 	{
-		printk("esp_custom: ESP_PWR_GPIO %d\n", ESP_PWR_GPIO);
+		pr_info("esp_custom: ESP_PWR_GPIO %d\n", ESP_PWR_GPIO);
 
 		res = gpio_request(ESP_PWR_GPIO, "ESP_PWR");
 		if(res < 0) return res;
@@ -575,7 +554,7 @@ static int esp_gpio_init(void)
 	}
 	else
 	{
-		printk("esp_custom: invalid GPIO%d\n", ESP_PWR_GPIO);
+		pr_alert("esp_custom: invalid GPIO%d\n", ESP_PWR_GPIO);
 		return -EINVAL;
 	}
 
@@ -584,18 +563,18 @@ static int esp_gpio_init(void)
 	esp.data_gpio_irq = gpio_to_irq(ESP_HAS_DATA_GPIO);
 	if(esp.data_gpio_irq < 0)
 	{
-		printk(KERN_ALERT "data_gpio_irq: %d\n", esp.data_gpio_irq);
+		pr_alert("data_gpio_irq: %d\n", esp.data_gpio_irq);
 		return esp.data_gpio_irq;
 	}
-	printk(KERN_INFO "data_gpio_irq: %d\n", esp.data_gpio_irq);
+	pr_info("data_gpio_irq: %d\n", esp.data_gpio_irq);
 	// Interrupt setup for change ready status
 	esp.ready_gpio_irq = gpio_to_irq(ESP_READY_GPIO);
 	if(esp.ready_gpio_irq < 0)
 	{
-		printk(KERN_ALERT "ready_gpio_irq: %d\n", esp.ready_gpio_irq);
+		pr_alert("ready_gpio_irq: %d\n", esp.ready_gpio_irq);
 		return esp.ready_gpio_irq;
 	}
-	printk(KERN_INFO "data_gpio_irq: %d\n", esp.ready_gpio_irq);
+	pr_info("data_gpio_irq: %d\n", esp.ready_gpio_irq);
 
 	esp.data_irq_captured = false;
 	esp.ready_irq_captured = false;
@@ -606,6 +585,7 @@ static int esp_gpio_init(void)
 static int esp_control_init(void)
 {
 	int res;
+
 	esp.ctrl_fops.owner 	= THIS_MODULE;
 	esp.ctrl_fops.write		= on_esp_cmd_received;
 	esp.ctrl_fops.llseek 	= no_llseek;
@@ -616,7 +596,7 @@ static int esp_control_init(void)
 	res = misc_register(&(esp.ctrl_dev));
 	if(res)
 	{
-		printk(KERN_ALERT "misc_register: %d\n", res); 
+		pr_alert("misc_register: %d\n", res); 
 		return res; 
 	}
 	return 0;
@@ -626,10 +606,6 @@ static int esp_ipinfo_init(void)
 {
 	int res;
 	esp.ip_info_nodes_count = 0;
-	// for(res = 1; res < 11; res++)
-	// {
-	// 	esp.ip_info_array[res-1] = res*256*256*256+res*256*256+res*256+res+1;
-	// }
 
 	esp.ipinfo_fops.owner 	= THIS_MODULE;
 	esp.ipinfo_fops.read	= on_esp_ipinfo_read;
@@ -641,7 +617,7 @@ static int esp_ipinfo_init(void)
 	res = misc_register(&(esp.ipinfo_dev));
 	if(res)
 	{
-		printk(KERN_ALERT "ipinfo_register: %d\n", res); 
+		pr_alert("ipinfo_register: %d\n", res); 
 		return res; 
 	}
 	return 0;
@@ -652,19 +628,19 @@ static int esp_spi_init(void)
 	esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
 	esp.chip.bus_num 		= ESP_SPI_BUS_NUM;
 	esp.chip.chip_select 	= ESP_SPI_DEV_NUM;
-	esp.chip.mode 			= SPI_MODE_3;	// don't forget to make ... | SPI_CS_HIGH after start
+	esp.chip.mode 			= SPI_MODE_3;
 
 	esp.master = spi_busnum_to_master(esp.chip.bus_num);
 	if(!(esp.master))
 	{
-		printk(KERN_ALERT "MASTER not found.\n");
+		pr_alert("MASTER not found.\n");
 		return -ENODEV;
 	}
 
 	esp.spi_dev = spi_new_device(esp.master, &(esp.chip));
 	if(!(esp.spi_dev)) 
 	{
-		printk(KERN_ALERT "FAILED to create slave(1).\n");
+		pr_alert("FAILED to create slave(1).\n");
 		return -ENODEV;
 	}
 
@@ -690,94 +666,134 @@ static int esp_wq_init(void)
 	return 0;
 }
 
+static int esp_hang_timer_init(void)
+{
+	int ret;
+
+	setup_timer(&esp.hang_timer, on_esp_timer, 0);
+
+	ret = mod_timer(&esp.hang_timer, jiffies + msecs_to_jiffies(ESP_TIMER_PERIOD_MS));
+	if(ret)
+	{
+		pr_alert("mod_timer failed: %d\n", ret);
+	}
+
+	return ret;
+}
+
+static void esp_slip_init(void)
+{
+	esp.slip_context.maxlen = ESP_SPI_MAX_PACK_SIZE;
+	esp.slip_context.output = esp.spi_rx_buf;
+	esp.slip_context.pos = 0;
+}
 
 static int esp_init(void)
 {
 	int res = 0;
 
-	esp.state = IS_OFF;
-	esp.data_gpio_irq = 0;
-	esp.ready_gpio_irq = 0;
-	esp.slip_context.maxlen = ESP_SPI_MAX_PACK_SIZE;
-	esp.slip_context.output = esp.spi_rx_buf;
-	esp.slip_context.pos = 0;
+	esp.spi_dev	= NULL;
+	mesh_dev 	= NULL;
+	wifi_dev 	= NULL;
+	esp.wq 		= NULL;
+	esp.ctrl_dev.this_device 	= NULL;
+	esp.ipinfo_dev.this_device 	= NULL;
+	esp.data_gpio_irq 	= 0;
+	esp.ready_gpio_irq 	= 0;
 
-	mutex_init(&(esp.lock));
+	esp_slip_init();
+
+	res = esp_hang_timer_init();
+	if(res)
+	{
+		pr_alert("esp_hang_timer_init: %d\n", res);
+		return res;
+	}
 
 	res = esp_gpio_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_gpio_init: %d\n", res);
+		pr_alert("esp_gpio_init: %d\n", res);
 		return res;
 	}
 
 	res = esp_control_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_control_init: %d\n", res);
+		pr_alert("esp_control_init: %d\n", res);
 		return res;
 	}
 
 	res = esp_ipinfo_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_ipinfo_init: %d\n", res);
+		pr_alert("esp_ipinfo_init: %d\n", res);
 		return res;
 	}
 
 	res = esp_spi_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_spi_init: %d\n", res);
+		pr_alert("esp_spi_init: %d\n", res);
 		return res;
 	}
 
 	res = esp_wq_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_spi_init: %d\n", res);
+		pr_alert("esp_spi_init: %d\n", res);
 		return res;
 	}
 
 	res = esp_net_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_net_init: %d\n", res);
+		pr_alert("esp_net_init: %d\n", res);
 		return res;
 	}
+
+	msleep(ESP_RST_WAIT_MS*2);
+	esp_on(ESP_BOOT_FLASH);
 
 	return 0;
 }
 
 static void esp_deinit(void)
 {
-	spi_unregister_device(esp.spi_dev);
+	if(esp.spi_dev != NULL) spi_unregister_device(esp.spi_dev);
 
-	misc_deregister(&(esp.ctrl_dev));
-	misc_deregister(&(esp.ipinfo_dev));
+	if(esp.ctrl_dev.this_device != NULL) 
+		misc_deregister(&(esp.ctrl_dev));
+	if(esp.ipinfo_dev.this_device != NULL) 
+		misc_deregister(&(esp.ipinfo_dev));
 
-	esp_net_close(wifi_dev);
-	unregister_netdev(wifi_dev);
-	free_netdev(wifi_dev);
+	if(wifi_dev != NULL) 
+	{
+		esp_net_close(wifi_dev);
+		unregister_netdev(wifi_dev);
+		free_netdev(wifi_dev);
+	}
 
-	esp_net_close(mesh_dev);
-	unregister_netdev(mesh_dev);
-	free_netdev(mesh_dev);
+	if(mesh_dev != NULL) 
+	{
+		esp_net_close(mesh_dev);
+		unregister_netdev(mesh_dev);
+		free_netdev(mesh_dev);
+	}
 
-	destroy_workqueue(esp.wq);
+	if(esp.wq != NULL) destroy_workqueue(esp.wq);
 
 	esp_off();
 
-	// if(esp.data_gpio_irq > 0) free_irq(esp.data_gpio_irq, NULL);
-	// if(esp.ready_gpio_irq > 0) free_irq(esp.ready_gpio_irq, NULL);
 	gpio_free(ESP_PROG_GPIO);
 	gpio_free(ESP_PWR_GPIO);
 	gpio_free(ESP_READY_GPIO);
 	gpio_free(ESP_HAS_DATA_GPIO);
 
-	printk(KERN_INFO "ESP8266 is free\n"); 
-}
+	del_timer(&esp.hang_timer);
 
+	pr_info("ESP8266 is free\n"); 
+}
 
 static int __init ktest_module_init(void)
 {
@@ -785,12 +801,12 @@ static int __init ktest_module_init(void)
 	res = esp_init();
 	if(res)
 	{
-		printk(KERN_ALERT "esp_init: %d\n", res);
+		pr_alert("esp_init: %d\n", res);
+		esp_deinit();
 		return res;
 	}
 
-
-	printk( "ESP8266 under control\n" ); 
+	pr_info( "ESP8266 under control\n" ); 
 	return res;
 }
 
