@@ -9,7 +9,6 @@
 #include <linux/string.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/mutex.h>
 #include <linux/tty.h>
 #include <linux/netdevice.h>
 #include <linux/interrupt.h>
@@ -18,6 +17,7 @@
 #include <linux/if_arp.h>
 #include <linux/ip.h>
 #include <linux/socket.h>
+#include <linux/timer.h>
 
 #include <linux/etherdevice.h>
 
@@ -54,7 +54,7 @@
 #define ESP_CMD_RESET		"rst\n"
 #define ESP_CMD_PROG		"prog\n"
 #define ESP_MAX_CMD_LEN		10
-#define ESP_RST_WAIT_MS		1500
+#define ESP_RST_WAIT_MS		2000
 #define ESP_RST_WAIT1_MS	200
 
 #define ESP_UART_DEV		"/dev/ttyHS0"
@@ -65,12 +65,7 @@
 
 #define ESP_MAX_MESH_NODES	512
 
-typedef enum esp_state
-{
-	IS_ON,
-	IS_OFF,
-	IS_IN_PROG,
-}esp_state;
+#define ESP_TIMER_PERIOD_MS	60000
 
 /* Network device private data */
 typedef struct
@@ -81,9 +76,6 @@ typedef struct
 
 typedef struct
 {
-	int state;
-	struct mutex lock;
-
 	// ESP switch control
 	struct file_operations	ctrl_fops;
 	struct miscdevice   	ctrl_dev;
@@ -108,14 +100,14 @@ typedef struct
 	unsigned char spi_rx_buf[ESP_SPI_MAX_PACK_SIZE];	// kolhoz or not kolhoz there is the point
 
 	struct workqueue_struct	* wq;
-	struct work_struct work;	// work to transmit or receive SPI data
+	struct work_struct 		work;	// work to transmit or receive SPI data
 
-	int data_gpio_irq;
-	bool data_irq_captured;
-	int ready_gpio_irq;
-	bool ready_irq_captured;
+	int 	data_gpio_irq;
+	bool 	data_irq_captured;
+	int 	ready_gpio_irq;
+	bool 	ready_irq_captured;
 
-	//int timer_irq;
+	struct timer_list hang_timer;
 
 	// ESP network interfaces
 	struct net_device_ops 	ndops;
