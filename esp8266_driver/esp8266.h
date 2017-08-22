@@ -27,6 +27,7 @@
 #include <../arch/arm/mach-msm/board-9615.h>
 
 #include "slip.h"
+#include "crc.h"
 
 //look at gpiolib.c by Sierra
 #define ESP_PWR_GPIO		SWIMCU_GPIO_TO_SYS(5)	// ESP_GPIO_ON GPIO39 //78
@@ -67,6 +68,10 @@
 
 #define ESP_TIMER_PERIOD_MS	60000
 
+#define IOCTL_CONFIG_LENGTH	1024
+#define IOCTL_CONFIG_GET 	_IOR(0, 0, char *)
+#define IOCTL_CONFIG_SET 	_IOR(0, 1, char *)
+
 /* Network device private data */
 typedef struct
 {
@@ -74,8 +79,25 @@ typedef struct
 	struct sk_buff 		* skb;
 }esp_net_priv_t;
 
+typedef enum pack_type
+{
+	GATEWAY_ROUTE_INFO = 0,
+	GATEWAY_CONFIG_WRITE,
+	GATEWAY_CONFIG_READ
+}packet_type_t;
+
+typedef enum esp_mode
+{
+	MODE_ON,
+	MODE_OFF,
+	MODE_CONF,
+	MODE_PROG
+}esp_mode;
+
 typedef struct
 {
+	int mode;
+
 	// ESP switch control
 	struct file_operations	ctrl_fops;
 	struct miscdevice   	ctrl_dev;
@@ -85,6 +107,12 @@ typedef struct
 	struct miscdevice   	ipinfo_dev;
 	uint32_t ip_info_array[ESP_MAX_MESH_NODES];
 	uint16_t ip_info_nodes_count;
+
+	// ESP ginfig interface
+	struct file_operations	config_fops;
+	struct miscdevice   	config_dev;
+	unsigned char config_buf[IOCTL_CONFIG_LENGTH];
+	//atomic_t config_roff;
 
 	// ESP SPI
 	struct spi_master 		* master;
