@@ -18,6 +18,7 @@
 #include <linux/ip.h>
 #include <linux/socket.h>
 #include <linux/timer.h>
+#include <linux/wait.h>
 
 #include <linux/etherdevice.h>
 
@@ -68,9 +69,12 @@
 
 #define ESP_TIMER_PERIOD_MS	60000
 
-#define IOCTL_CONFIG_LENGTH	1024
-#define IOCTL_CONFIG_GET 	_IOR(0, 0, char *)
-#define IOCTL_CONFIG_SET 	_IOR(0, 1, char *)
+#define IOCTL_CONFIG_LENGTH		1024
+#define IOCTL_CONFIG_MAGIC_NUM  'e'
+#define IOCTL_CONFIG_GET        _IOWR(IOCTL_CONFIG_MAGIC_NUM, 0, char *)
+#define IOCTL_CONFIG_SET        _IOWR(IOCTL_CONFIG_MAGIC_NUM, 1, char *)
+// #define IOCTL_CONFIG_GET        _IO(IOCTL_CONFIG_MAGIC_NUM, 0)
+// #define IOCTL_CONFIG_SET        _IO(IOCTL_CONFIG_MAGIC_NUM, 1)
 
 /* Network device private data */
 typedef struct
@@ -105,19 +109,20 @@ typedef struct
 	// ESP connected IP's information
 	struct file_operations	ipinfo_fops;
 	struct miscdevice   	ipinfo_dev;
-	uint32_t ip_info_array[ESP_MAX_MESH_NODES];
-	uint16_t ip_info_nodes_count;
+	uint32_t 				ip_info_array[ESP_MAX_MESH_NODES];
+	uint16_t 				ip_info_nodes_count;
 
 	// ESP ginfig interface
 	struct file_operations	config_fops;
 	struct miscdevice   	config_dev;
-	unsigned char config_buf[IOCTL_CONFIG_LENGTH];
+	unsigned char 			config_buf[IOCTL_CONFIG_LENGTH];
+	int 					config_data_read;
 	//atomic_t config_roff;
 
 	// ESP SPI
-	struct spi_master 		* master;
+	struct spi_master * 	master;
 	struct spi_board_info	chip;
-	struct spi_device		* spi_dev;
+	struct spi_device * 	spi_dev;
 
 	unsigned char spi_blk_tx_buf[ESP_SPI_BUF_SIZE];
 	unsigned char spi_blk_rx_buf[ESP_SPI_BUF_SIZE];
@@ -135,11 +140,11 @@ typedef struct
 	int 	ready_gpio_irq;
 	bool 	ready_irq_captured;
 
-	struct timer_list hang_timer;
+	struct timer_list 		hang_timer;
 
 	// ESP network interfaces
 	struct net_device_ops 	ndops;
 	// Network queque to tx to SPI
-	struct sk_buff_head q_to_spi;
-	struct sk_buff * skb;
+	struct sk_buff_head 	q_to_spi;
+	struct sk_buff * 		skb;
 }esp_t;

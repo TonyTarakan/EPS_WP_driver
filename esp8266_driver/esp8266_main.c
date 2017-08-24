@@ -454,7 +454,6 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 static ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
 {
 	int count = esp.ip_info_nodes_count;
-	int i;
 
 	memcpy(buf, esp.ip_info_array, 4*count);
 
@@ -462,55 +461,96 @@ static ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t 
 }
 
 
+static DECLARE_WAIT_QUEUE_HEAD(esp_wait_queue);
+
 static ssize_t on_esp_config_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
 {
-	printk("on_esp_config_read len=%d\n",len);
-	return 0;
+	int res;
+
+	struct data_transfer_t
+	{
+		int length;
+		char * data;
+	}data_transfer;
+
+	memcpy(&data_transfer, (char *)buf, sizeof(data_transfer));
+
+	on_esp_config_write(filp, (const char __user *)data_transfer.data, data_transfer.length, 0);
+
+	res = wait_event_interruptible(esp_wait_queue, esp.config_data_read);
+	if(res)
+	{
+		esp.config_data_read = 0;
+		pr_alert("wait_event_interruptible on config_data_read: %d\n", res);
+		return res;
+	}
+
+	esp.config_data_read = 0;
+
+	res = copy_to_user(buf, esp.config_data_read, len);
+	if(res)
+	{
+		pr_alert("wait_event_interruptible on config_data_read: %d\n", res);
+		return res;
+	}
+
+	return len;
 }
 static ssize_t on_esp_config_write(struct file * file, const char __user * buf, size_t len, loff_t * ppos)
 {
-	int i;
-	// ssize_t ret;
+	ssize_t ret;
 
-	// int spi_esc_tx_len;
+	int spi_esc_tx_len;
 
-	// void * write_buf;
+	char * write_buf;
 	
-	// write_buf = kmalloc(len, GFP_KERNEL);
-	// if(write_buf == NULL)
-	// 	return -ENOMEM;
+	write_buf = kmalloc(len, GFP_KERNEL);
+	if(write_buf == NULL)
+	 	return -ENOMEM;
 
-	// ret = copy_from_user(write_buf, buf, len);
+	ret = copy_from_user(write_buf, buf, (unsigned long)len);
+	if(ret)
+	{
+		kfree(write_buf);
+		return ret;
+	}
 
-	// spi_esc_tx_len = slip_stuff(write_buf, esp.spi_tx_buf, len);
-	// esp_spi_write_data(esp.spi_tx_buf, spi_esc_tx_len);
-	printk("on_esp_config_write:\n");
-	for(i=0; i<len; i++)
-		printk("%s ", buf[i]);
-	printk("\n");
+	spi_esc_tx_len = slip_stuff(write_buf, esp.spi_tx_buf, len);
+	esp_spi_write_data(esp.spi_tx_buf, spi_esc_tx_len);
+
+	kfree(write_buf);
 
 	return 0;
 }
-static long on_esp_config_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, unsigned long cmdbuf)
+
+static long on_esp_config_ioctl(struct file *filp, unsigned int cmd, unsigned long cmdbuf)
 {
+	long ret = 0;
+
+	struct data_transfer_t
+	{
+		int length;
+		char * data;
+	}data_transfer;
+
+	memcpy(&data_transfer, (char *)cmdbuf, sizeof(data_transfer));
 
 	switch(cmd)
 	{
 	case IOCTL_CONFIG_SET:
-		copy_from_user(esp.config_buf, (char *)cmdbuf, IOCTL_CONFIG_LENGTH);
-		on_esp_config_write(filp, (char *)esp.config_buf, IOCTL_CONFIG_LENGTH, 0);
+		on_esp_config_write(filp, (const char __user *)data_transfer.data, data_transfer.length, 0);
 		break;
 
 	case IOCTL_CONFIG_GET:
-		on_esp_config_read(filp, (char *)esp.config_buf, IOCTL_CONFIG_LENGTH, 0); 
-		copy_to_user((char *)cmdbuf, esp.config_buf, IOCTL_CONFIG_LENGTH);		
+		on_esp_config_read(filp, (char __user * )data_transfer.data, data_transfer.length, 0); 
+		//ret = copy_to_user((char *)cmdbuf, esp.config_buf, IOCTL_CONFIG_LENGTH);		
 		break;
 
 	default:
 		pr_alert("Wrong IOCTL\n");
 		return -ENOTTY;
 	}
-	return 0;
+	return ret;
 }
 
 
@@ -693,6 +733,8 @@ static int esp_config_init(void)
 {
 	int res;
 
+	esp.config_data_read = 0;
+
 	esp.config_fops.owner 			= THIS_MODULE;
 	esp.config_fops.unlocked_ioctl	= on_esp_config_ioctl;
 	esp.config_fops.read			= on_esp_config_read;
@@ -703,6 +745,9 @@ static int esp_config_init(void)
 	esp.config_dev.fops 	= &(esp.config_fops);
 
 	//esp.config_roff = ATOMIC_INIT(0);
+	pr_info("IOCTL_CONFIG_SET K = %u\n", IOCTL_CONFIG_SET);
+    pr_info("IOCTL_CONFIG_GET K = %u\n", IOCTL_CONFIG_GET);
+
 
 	res = misc_register(&(esp.config_dev));
 	if(res)
