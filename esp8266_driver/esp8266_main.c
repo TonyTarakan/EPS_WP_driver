@@ -165,8 +165,8 @@ static int data_route(slip_t * context)
 			break;
 
 		case GATEWAY_CONFIG_READ:
-
-			// write data to /dev/esp8266_config
+			memcpy(&esp., &data[4], sizeof(esp.ip_info_nodes_count));
+			esp.config_data_read = 1;
 			break;
 
 		default: 
@@ -487,7 +487,7 @@ static ssize_t on_esp_config_read(struct file * file, char __user * buf, size_t 
 
 	esp.config_data_read = 0;
 
-	res = copy_to_user(buf, esp.config_data_read, len);
+	res = copy_to_user(buf, esp.config_buf, len);
 	if(res)
 	{
 		pr_alert("wait_event_interruptible on config_data_read: %d\n", res);
