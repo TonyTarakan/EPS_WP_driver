@@ -134,12 +134,15 @@ static int data_route(slip_t * context)
 	struct net_device * dev;
 	struct sk_buff * skb;
 
+	uint16_t flags;
+
 	unsigned char * data = context->output;
 	int length = context->pos;
 
-	if((data[0] & 0xF0) == 0x40)
+	if((data[0] & 0xF0) == 0x40)	// IP packet
 	{
-		// IP routing
+		// IP routing 
+		// If dst addr == 10.x.x.x, then mesh
 		if((data[0] == 0x45) && (data[12] == 10))
 		{
 			dev = mesh_dev;
@@ -149,14 +152,27 @@ static int data_route(slip_t * context)
 			dev = wifi_dev;
 		}
 	}
-	else if (data[0] == 0x54)
+	else if (data[0] == 0x54)		// Service data
 	{
+		memcpy(&flags, data+1, sizeof(flags));
 		// Routing table handling
-		memcpy(&esp.ip_info_nodes_count, &data[4], sizeof(esp.ip_info_nodes_count));
+		switch(flags)
+		{
+		case GATEWAY_ROUTE_INFO:
+			memcpy(&esp.ip_info_nodes_count, &data[4], sizeof(esp.ip_info_nodes_count));
+			if(esp.ip_info_nodes_count > ESP_MAX_MESH_NODES) return -EINVAL;
+			memcpy(esp.ip_info_array, &data[7], esp.ip_info_nodes_count*4);
+			break;
 
-		if(esp.ip_info_nodes_count > ESP_MAX_MESH_NODES) return -EINVAL;
+		case GATEWAY_CONFIG_READ:
+			pr_info("GATEWAY_CONFIG_READ\n");
+			memcpy(&esp.config_buf, &data[4], sizeof(esp.config_buf)-4);
+			esp.config_data_avail = true;
+			break;
 
-		memcpy(esp.ip_info_array, &data[7], esp.ip_info_nodes_count*4);
+		default: 
+			break;
+		}
 		return 0;
 	}
 	else
@@ -186,7 +202,6 @@ static int data_route(slip_t * context)
 	dev->stats.rx_bytes += length;
 	return 0;
 }
-
 
 static int esp_spi_read_data(void)
 {
@@ -357,6 +372,7 @@ static int esp_on(int prog)
 static int esp_off(void)
 {
 	gpio_set_value_cansleep(ESP_PWR_GPIO, 0);
+	esp.mode = MODE_OFF;
 	return 0;
 }
 
@@ -435,22 +451,65 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 	return len;
 }
 
+
 static ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
 {
 	int count = esp.ip_info_nodes_count;
-	int i;
 
-	//memcpy(buf, esp.ip_info_array, 4*count);
+	memcpy(buf, esp.ip_info_array, 4*count);
 
-	for(i = 0; i < count; i++)
-		sprintf(buf+9*i, "%08x ", esp.ip_info_array[i]);
-
-	sprintf(buf+9*i, "\r\n");
-	//sprintf(buf++, -1);
-	//pr_info("len = %d\n", len);
-
-	return 9*i+2;
+	return 4*count;
 }
+
+
+static ssize_t on_esp_config_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
+{
+	int res;
+
+	pr_info("on_esp_config_read\n");
+
+	if(esp.config_data_avail)
+	{
+		res = copy_to_user(buf, esp.config_buf, len);
+		if(res)
+		{
+			pr_alert("wait_event_interruptible on config_data_read: %d\n", res);
+			return res;
+		}
+		esp.config_data_avail = false;
+		return len;
+	}
+
+
+	queue_work(esp.wq, &(esp.work));
+	return 0;
+}
+
+static ssize_t on_esp_config_write(struct file * file, const char __user * buf, size_t len, loff_t * ppos)
+{
+	ssize_t ret;
+	int spi_esc_tx_len;
+	char * write_buf;
+	
+	write_buf = kmalloc(len, GFP_KERNEL);
+	if(write_buf == NULL)
+	 	return -ENOMEM;
+
+	ret = copy_from_user(write_buf, buf, (unsigned long)len);
+	if(ret)
+	{
+		kfree(write_buf);
+		return -EIO;
+	}
+
+	spi_esc_tx_len = slip_stuff(write_buf, esp.spi_tx_buf, len);
+	esp_spi_write_data(esp.spi_tx_buf, spi_esc_tx_len);
+
+	kfree(write_buf);
+
+	return len;
+}
+
 
 static void on_esp_timer( unsigned long data )
 {
@@ -491,7 +550,6 @@ static void esp_big_worker(struct work_struct * work)
 		dev_kfree_skb(skb);
 	}
 }
-
 
 
 static int esp_gpio_init(void)
@@ -623,6 +681,30 @@ static int esp_ipinfo_init(void)
 	return 0;
 }
 
+// Config device
+static int esp_config_init(void)
+{
+	int res;
+
+	esp.config_data_avail = false;
+
+	esp.config_fops.owner 			= THIS_MODULE;
+	esp.config_fops.read			= on_esp_config_read;
+	esp.config_fops.write			= on_esp_config_write;
+
+	esp.config_dev.minor 	= MISC_DYNAMIC_MINOR;
+	esp.config_dev.name 	= "esp8266_config";
+	esp.config_dev.fops 	= &(esp.config_fops);
+
+	res = misc_register(&(esp.config_dev));
+	if(res)
+	{
+		pr_alert("config_register: %d\n", res); 
+		return res; 
+	}
+	return 0;
+}
+
 static int esp_spi_init(void)
 {
 	esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
@@ -723,6 +805,15 @@ static int esp_init(void)
 		pr_alert("esp_control_init: %d\n", res);
 		return res;
 	}
+	pr_info("esp8266_ctrl registered\n");
+
+	res = esp_config_init();
+	if(res)
+	{
+		pr_alert("esp_config_init: %d\n", res);
+		return res;
+	}
+	pr_info("esp8266_config registered\n");
 
 	res = esp_ipinfo_init();
 	if(res)
@@ -730,6 +821,7 @@ static int esp_init(void)
 		pr_alert("esp_ipinfo_init: %d\n", res);
 		return res;
 	}
+	pr_info("esp8266_ipinfo registered\n");
 
 	res = esp_spi_init();
 	if(res)
@@ -764,6 +856,8 @@ static void esp_deinit(void)
 
 	if(esp.ctrl_dev.this_device != NULL) 
 		misc_deregister(&(esp.ctrl_dev));
+	if(esp.config_dev.this_device != NULL) 
+		misc_deregister(&(esp.config_dev));
 	if(esp.ipinfo_dev.this_device != NULL) 
 		misc_deregister(&(esp.ipinfo_dev));
 
