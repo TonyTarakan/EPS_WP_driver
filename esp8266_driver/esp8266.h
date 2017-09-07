@@ -56,7 +56,7 @@
 #define ESP_CMD_RESET		"rst\n"
 #define ESP_CMD_PROG		"prog\n"
 #define ESP_MAX_CMD_LEN		10
-#define ESP_RST_WAIT_MS		2000
+#define ESP_RST_WAIT_MS		3000
 #define ESP_RST_WAIT1_MS	200
 
 #define ESP_UART_DEV		"/dev/ttyHS0"
@@ -69,12 +69,7 @@
 
 #define ESP_TIMER_PERIOD_MS	60000
 
-#define IOCTL_CONFIG_LENGTH		1024
-#define IOCTL_CONFIG_MAGIC_NUM  'e'
-#define IOCTL_CONFIG_GET        _IOWR(IOCTL_CONFIG_MAGIC_NUM, 0, char *)
-#define IOCTL_CONFIG_SET        _IOWR(IOCTL_CONFIG_MAGIC_NUM, 1, char *)
-// #define IOCTL_CONFIG_GET        _IO(IOCTL_CONFIG_MAGIC_NUM, 0)
-// #define IOCTL_CONFIG_SET        _IO(IOCTL_CONFIG_MAGIC_NUM, 1)
+#define ESP_CONFIG_LENGTH	1024
 
 /* Network device private data */
 typedef struct
@@ -86,8 +81,8 @@ typedef struct
 typedef enum pack_type
 {
 	GATEWAY_ROUTE_INFO = 0,
-	GATEWAY_CONFIG_WRITE,
-	GATEWAY_CONFIG_READ
+	GATEWAY_CONFIG_WRITE = 1,
+	GATEWAY_CONFIG_READ = 2
 }packet_type_t;
 
 typedef enum esp_mode
@@ -115,9 +110,9 @@ typedef struct
 	// ESP ginfig interface
 	struct file_operations	config_fops;
 	struct miscdevice   	config_dev;
-	unsigned char 			config_buf[IOCTL_CONFIG_LENGTH];
-	int 					config_data_read;
-	//atomic_t config_roff;
+	unsigned char 			config_buf[ESP_CONFIG_LENGTH];
+	bool 					config_data_avail;
+
 
 	// ESP SPI
 	struct spi_master * 	master;
