@@ -56,8 +56,8 @@
 #define ESP_CMD_RESET		"rst\n"
 #define ESP_CMD_PROG		"prog\n"
 #define ESP_MAX_CMD_LEN		10
-#define ESP_RST_WAIT_MS		3000
-#define ESP_RST_WAIT1_MS	200
+#define ESP_RST_WAIT_MS		1000 // maybe reduce?
+#define ESP_RST_WAIT1_MS	200  // maybe reduce?
 
 #define ESP_UART_DEV		"/dev/ttyHS0"
 #define ESP_UART_MODE		0
