@@ -4,6 +4,11 @@ static esp_t esp;
 struct net_device * wifi_dev;
 struct net_device * mesh_dev;
 
+static const struct of_device_id esp_spi_dt_ids[] = {
+	{ .compatible = "spidev" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, esp_spi_dt_ids);
 
 /*
  * GPIO interrupt handler. Just catch interrupt and then process with work_handler
@@ -13,6 +18,46 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 	queue_work(esp.wq, &(esp.work));
 	return IRQ_HANDLED;
 }
+
+
+
+int esp_spi_drv_probe(struct spi_device *spi)
+{
+    int ret;
+    pr_info("spi drv probe!\n" );
+ 
+    spi->mode = SPI_MODE_3;
+    spi->max_speed_hz = ESP_SPI_MAX_SPEED;
+    spi->bits_per_word = 8;
+     
+    ret = spi_setup(spi);
+    if (ret < 0)
+        return ret;
+ 
+    esp.spi_dev = spi;
+
+    while(1);
+
+ 
+    return 0;
+}
+
+int esp_spi_drv_remove(struct spi_device *spi)
+{
+	pr_info("spi drv remove!\n" );
+	return 0;
+}
+
+struct spi_driver esp_spi_drv = 
+{
+	.driver = 
+	{
+		.name = "esp_spi",
+		.owner = THIS_MODULE,
+	},
+	.probe = esp_spi_drv_probe,
+	.remove = esp_spi_drv_remove,
+};
 
 
 // maybe one function can be used fo it?
@@ -285,7 +330,7 @@ int esp_net_init(void)
 	esp.ndops.ndo_start_xmit 	= esp_net_start_tx;
 
 
-	wifi_dev = alloc_netdev(sizeof(esp_net_priv_t), "espwifi%d", esp_net_setup);
+	wifi_dev = alloc_netdev(sizeof(esp_net_priv_t), "espwifi%d", 0, esp_net_setup); // 4 args for kernel >=3.17
 
 	// !!! hardcode
 	esp_net_mac_setup(wifi_dev, devaddr_wifi, 6);
@@ -298,7 +343,7 @@ int esp_net_init(void)
 		return res; 
 	}
 
-	mesh_dev = alloc_netdev(sizeof(esp_net_priv_t), "espmesh%d", esp_net_mesh_setup);
+	mesh_dev = alloc_netdev(sizeof(esp_net_priv_t), "espmesh%d", 0, esp_net_mesh_setup); // 4 args for kernel >=3.17
 
 	// !!! hardcode
 	esp_net_mac_setup(mesh_dev, devaddr_mesh, 6);
@@ -707,27 +752,37 @@ static int esp_config_init(void)
 
 static int esp_spi_init(void)
 {
-	esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
-	esp.chip.bus_num 		= ESP_SPI_BUS_NUM;
-	esp.chip.chip_select 	= ESP_SPI_DEV_NUM;
-	esp.chip.mode 			= SPI_MODE_3;
+	int ret = 0;
+	// esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
+	// esp.chip.bus_num 		= ESP_SPI_BUS_NUM;
+	// esp.chip.chip_select 	= ESP_SPI_DEV_NUM;
+	// esp.chip.mode 			= SPI_MODE_3;
 
-	esp.master = spi_busnum_to_master(esp.chip.bus_num);
-	if(!(esp.master))
-	{
-		pr_alert("MASTER not found.\n");
-		return -ENODEV;
-	}
+	pr_info("esp_spi_init ... \n");
+	ret = spi_register_driver(&esp_spi_drv);
+    if (ret < 0)
+    {
+        pr_alert("Cant register spi dev\n");
+        return ret;
+    }
+    pr_info("spi_register_driver OK \n");
 
-	esp.spi_dev = spi_new_device(esp.master, &(esp.chip));
-	if(!(esp.spi_dev)) 
-	{
-		pr_alert("FAILED to create slave(1).\n");
-		return -ENODEV;
-	}
+	// esp.master = spi_busnum_to_master(esp.chip.bus_num);
+	// if(!(esp.master))
+	// {
+	// 	pr_alert("MASTER not found.\n");
+	// 	return -ENODEV;
+	// }
 
-	esp.spi_dev->bits_per_word = 8;
-	spi_setup(esp.spi_dev);
+	// esp.spi_dev = spi_new_device(esp.master, &(esp.chip));
+	// if(!(esp.spi_dev)) 
+	// {
+	// 	pr_alert("FAILED to create slave(1).\n");
+	// 	return -ENODEV;
+	// }
+
+	// esp.spi_dev->bits_per_word = 8;
+	// spi_setup(esp.spi_dev);
 
 	return 0;
 }
@@ -833,7 +888,7 @@ static int esp_init(void)
 	res = esp_wq_init();
 	if(res)
 	{
-		pr_alert("esp_spi_init: %d\n", res);
+		pr_alert("esp_wq_init: %d\n", res);
 		return res;
 	}
 
@@ -845,14 +900,14 @@ static int esp_init(void)
 	}
 
 	msleep(ESP_RST_WAIT_MS*2);
-	esp_on(ESP_BOOT_FLASH);
+	//esp_on(ESP_BOOT_FLASH);
 
 	return 0;
 }
 
 static void esp_deinit(void)
 {
-	if(esp.spi_dev != NULL) spi_unregister_device(esp.spi_dev);
+	if(esp.spi_dev != NULL) spi_unregister_driver(&esp_spi_drv);
 
 	if(esp.ctrl_dev.this_device != NULL) 
 		misc_deregister(&(esp.ctrl_dev));
@@ -889,7 +944,7 @@ static void esp_deinit(void)
 	pr_info("ESP8266 is free\n"); 
 }
 
-static int __init ktest_module_init(void)
+static int __init esp_module_init(void)
 {
 	int res = 0;
 	res = esp_init();
@@ -904,12 +959,12 @@ static int __init ktest_module_init(void)
 	return res;
 }
 
-static void __exit ktest_module_exit(void)
+static void __exit esp_module_exit(void)
 {
 	esp_deinit();
 }
 
 MODULE_LICENSE("GPL");
  
-module_init(ktest_module_init);
-module_exit(ktest_module_exit);
+module_init(esp_module_init);
+module_exit(esp_module_exit);
