@@ -6,6 +6,7 @@ struct net_device * mesh_dev;
 
 static const struct of_device_id esp_spi_dt_ids[] = {
 	{ .compatible = "spidev" },
+	{ .compatible = "brcm,bcm2835-spi", },
 	{},
 };
 MODULE_DEVICE_TABLE(of, esp_spi_dt_ids);
@@ -21,39 +22,27 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 
 
 
-int esp_spi_drv_probe(struct spi_device *spi)
+int esp_spi_drv_probe(struct platform_device *pdev)
 {
-    int ret;
-    pr_info("spi drv probe!\n" );
- 
-    spi->mode = SPI_MODE_3;
-    spi->max_speed_hz = ESP_SPI_MAX_SPEED;
-    spi->bits_per_word = 8;
-     
-    ret = spi_setup(spi);
-    if (ret < 0)
-        return ret;
- 
-    esp.spi_dev = spi;
-
-    while(1);
+    // int ret;
+    pr_info("spi drv probe!!!!!!!!!!!!\n" );
 
  
     return 0;
 }
 
-int esp_spi_drv_remove(struct spi_device *spi)
+int esp_spi_drv_remove(struct platform_device *pdev)
 {
 	pr_info("spi drv remove!\n" );
 	return 0;
 }
 
-struct spi_driver esp_spi_drv = 
+static struct platform_driver esp_spi_drv = 
 {
 	.driver = 
 	{
 		.name = "esp_spi",
-		.owner = THIS_MODULE,
+		.of_match_table	= esp_spi_dt_ids,
 	},
 	.probe = esp_spi_drv_probe,
 	.remove = esp_spi_drv_remove,
@@ -759,13 +748,20 @@ static int esp_spi_init(void)
 	// esp.chip.mode 			= SPI_MODE_3;
 
 	pr_info("esp_spi_init ... \n");
-	ret = spi_register_driver(&esp_spi_drv);
+	ret = platform_driver_register(&esp_spi_drv);
     if (ret < 0)
     {
         pr_alert("Cant register spi dev\n");
         return ret;
     }
     pr_info("spi_register_driver OK \n");
+
+    master = spi_alloc_master(&pdev->dev, sizeof(*bs));
+	if (!master) {
+		dev_err(&pdev->dev, "spi_alloc_master() failed\n");
+		return -ENOMEM;
+	}
+
 
 	// esp.master = spi_busnum_to_master(esp.chip.bus_num);
 	// if(!(esp.master))
@@ -907,7 +903,7 @@ static int esp_init(void)
 
 static void esp_deinit(void)
 {
-	if(esp.spi_dev != NULL) spi_unregister_driver(&esp_spi_drv);
+	if(esp.spi_dev != NULL) platform_driver_unregister(&esp_spi_drv);
 
 	if(esp.ctrl_dev.this_device != NULL) 
 		misc_deregister(&(esp.ctrl_dev));
