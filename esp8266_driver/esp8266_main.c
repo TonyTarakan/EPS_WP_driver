@@ -6,7 +6,6 @@ struct net_device * mesh_dev;
 
 static const struct of_device_id esp_spi_dt_ids[] = {
 	{ .compatible = "spidev" },
-	{ .compatible = "brcm,bcm2835-spi", },
 	{},
 };
 MODULE_DEVICE_TABLE(of, esp_spi_dt_ids);
@@ -22,27 +21,38 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 
 
 
-int esp_spi_drv_probe(struct platform_device *pdev)
+int esp_spi_drv_probe(struct spi_device *spi)
 {
     // int ret;
-    pr_info("spi drv probe!!!!!!!!!!!!\n" );
+    pr_info("spi drv probe!\n" );
 
- 
+    pr_info("bus_num = %d, chip_select = %d\n",  spi->master->bus_num, spi->chip_select);
+
+    if(spi->master->bus_num == ESP_SPI_BUS_NUM && spi->chip_select == ESP_SPI_DEV_NUM)
+    {
+    	pr_info("ESP SPI found\n" );
+    	esp.spi_dev = spi;
+		esp.spi_dev->bits_per_word = 8;
+		esp.spi_dev->mode = SPI_MODE_3;
+		esp.spi_dev->max_speed_hz = ESP_SPI_MAX_SPEED;
+		spi_setup(esp.spi_dev);
+	}
+
     return 0;
 }
 
-int esp_spi_drv_remove(struct platform_device *pdev)
+int esp_spi_drv_remove(struct spi_device *spi)
 {
 	pr_info("spi drv remove!\n" );
 	return 0;
 }
 
-static struct platform_driver esp_spi_drv = 
+static struct spi_driver esp_spi_driver = 
 {
 	.driver = 
 	{
-		.name = "esp_spi",
-		.of_match_table	= esp_spi_dt_ids,
+		.name = "esp8266",
+		.of_match_table	= of_match_ptr(esp_spi_dt_ids),
 	},
 	.probe = esp_spi_drv_probe,
 	.remove = esp_spi_drv_remove,
@@ -742,43 +752,15 @@ static int esp_config_init(void)
 static int esp_spi_init(void)
 {
 	int ret = 0;
-	// esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
-	// esp.chip.bus_num 		= ESP_SPI_BUS_NUM;
-	// esp.chip.chip_select 	= ESP_SPI_DEV_NUM;
-	// esp.chip.mode 			= SPI_MODE_3;
 
 	pr_info("esp_spi_init ... \n");
-	ret = platform_driver_register(&esp_spi_drv);
+	ret = spi_register_driver(&esp_spi_driver);
     if (ret < 0)
     {
         pr_alert("Cant register spi dev\n");
         return ret;
     }
     pr_info("spi_register_driver OK \n");
-
-    master = spi_alloc_master(&pdev->dev, sizeof(*bs));
-	if (!master) {
-		dev_err(&pdev->dev, "spi_alloc_master() failed\n");
-		return -ENOMEM;
-	}
-
-
-	// esp.master = spi_busnum_to_master(esp.chip.bus_num);
-	// if(!(esp.master))
-	// {
-	// 	pr_alert("MASTER not found.\n");
-	// 	return -ENODEV;
-	// }
-
-	// esp.spi_dev = spi_new_device(esp.master, &(esp.chip));
-	// if(!(esp.spi_dev)) 
-	// {
-	// 	pr_alert("FAILED to create slave(1).\n");
-	// 	return -ENODEV;
-	// }
-
-	// esp.spi_dev->bits_per_word = 8;
-	// spi_setup(esp.spi_dev);
 
 	return 0;
 }
@@ -896,14 +878,14 @@ static int esp_init(void)
 	}
 
 	msleep(ESP_RST_WAIT_MS*2);
-	//esp_on(ESP_BOOT_FLASH);
+	esp_on(ESP_BOOT_FLASH);
 
 	return 0;
 }
 
 static void esp_deinit(void)
 {
-	if(esp.spi_dev != NULL) platform_driver_unregister(&esp_spi_drv);
+	if(esp.spi_dev != NULL) spi_unregister_driver(&esp_spi_driver);
 
 	if(esp.ctrl_dev.this_device != NULL) 
 		misc_deregister(&(esp.ctrl_dev));
@@ -961,6 +943,7 @@ static void __exit esp_module_exit(void)
 }
 
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("spi:spidev");
  
 module_init(esp_module_init);
 module_exit(esp_module_exit);
