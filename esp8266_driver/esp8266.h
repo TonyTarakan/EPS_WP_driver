@@ -60,8 +60,8 @@
 #define ESP_UART_DEV		"/dev/ttyAMA0"	// RASPBERRY_PI_3 CONSOLE NEED TO BE SWITCHED OFF
 #define ESP_UART_MODE		0
 
-#define ESP_BOOT_FLASH		0
-#define ESP_BOOT_UART		1
+#define ESP_BOOT_FLASH		1
+#define ESP_BOOT_UART		0
 
 #define ESP_MAX_MESH_NODES	512
 
