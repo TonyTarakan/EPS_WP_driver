@@ -23,18 +23,29 @@
 #include <linux/etherdevice.h>
 
 #include <linux/spi/spi.h>
+#include <linux/spi/spidev.h>
 
+#ifdef SW_BASE
 #include <linux/sierra_bsudefs.h>
 #include <../arch/arm/mach-msm/board-9615.h>
+#endif
 
 #include "slip.h"
 #include "crc.h"
 
+
+#ifdef SW_BASE
 //look at gpiolib.c by Sierra
 #define ESP_PWR_GPIO		SWIMCU_GPIO_TO_SYS(5)	// ESP_GPIO_ON GPIO39 //78
 #define ESP_PROG_GPIO		SWIMCU_GPIO_TO_SYS(4)	// ESP_GPIO_0  GPIO38
 #define ESP_READY_GPIO		78						// ESP_GPIO_5  GPIO33
 #define ESP_HAS_DATA_GPIO	30						// ESP_GPIO_4  GPIO32
+#elif defined RPI_BASE
+#define ESP_PWR_GPIO		17	// ESP_GPIO_ON	// RASPBERRY_PI_3 GPIO17(11)
+#define ESP_PROG_GPIO		27	// ESP_GPIO_0	// RASPBERRY_PI_3 GPIO27(13)
+#define ESP_READY_GPIO		3	// ESP_GPIO_5	// RASPBERRY_PI_3 GPIO03(03)
+#define ESP_HAS_DATA_GPIO	2	// ESP_GPIO_4	// RASPBERRY_PI_3 GPIO02(05)
+#endif
 
 #define ESP_SPI_BUS_NUM		0
 #define ESP_SPI_DEV_NUM		0
@@ -59,11 +70,19 @@
 #define ESP_RST_WAIT_MS		1000 // maybe reduce?
 #define ESP_RST_WAIT1_MS	200  // maybe reduce?
 
-#define ESP_UART_DEV		"/dev/ttyHS0"
+
 #define ESP_UART_MODE		0
+#ifdef SW_BASE
+#define ESP_UART_DEV		"/dev/ttyHS0"
 
 #define ESP_BOOT_FLASH		0
 #define ESP_BOOT_UART		1
+#elif defined RPI_BASE
+#define ESP_UART_DEV		"/dev/ttyAMA0"	// RASPBERRY_PI_3 CONSOLE NEED TO BE SWITCHED OFF
+
+#define ESP_BOOT_FLASH		1
+#define ESP_BOOT_UART		0
+#endif
 
 #define ESP_MAX_MESH_NODES	512
 
