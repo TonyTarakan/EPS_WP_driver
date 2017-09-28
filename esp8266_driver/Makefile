@@ -12,13 +12,12 @@ esp8266-y := esp8266_main.o slip.o crc.o
 #
 # Legato tools contain such a directory, point to it.
 
-KBUILD_DIR=~/WORK/AS100GW/tmptests/buildtest/test040717/yocto/build_bin/tmp/work/swi_mdm9x15-poky-linux-gnueabi/linux-yocto/3.14.29+gitAUTOINC+961ca71325_80c2eed825-r0.1/linux-swi_mdm9x15-standard-build
+KBUILD_DIR=~/WORK/AS100GW/firmware/rasp/linux
 
-export PATH:=$(PATH):/opt/swi/y17-ext/sysroots/x86_64-pokysdk-linux/usr/bin/arm-poky-linux-gnueabi
 #
 # Kernel module build dependency
 all:
-	ARCH=arm CROSS_COMPILE=arm-poky-linux-gnueabi- make -C $(KBUILD_DIR) M=$(PWD) modules
+	ARCH=arm CROSS_COMPILE=~/WORK/AS100GW/firmware/rasp/tools/arm-bcm2708/arm-bcm2708-linux-gnueabi/bin/arm-bcm2708-linux-gnueabi- make -C $(KBUILD_DIR) M=$(PWD) modules
 #
 # Kernel module clean dependency
 clean:
