@@ -4,11 +4,6 @@ static esp_t esp;
 struct net_device * wifi_dev;
 struct net_device * mesh_dev;
 
-static const struct of_device_id esp_spi_dt_ids[] = {
-	{ .compatible = "spidev" },
-	{},
-};
-MODULE_DEVICE_TABLE(of, esp_spi_dt_ids);
 
 /*
  * GPIO interrupt handler. Just catch interrupt and then process with work_handler
@@ -19,6 +14,13 @@ static irqreturn_t esp_irq_handler(int irq, void * dev_id)
 	return IRQ_HANDLED;
 }
 
+
+#ifdef RPI_BASE
+static const struct of_device_id esp_spi_dt_ids[] = {
+	{ .compatible = "spidev" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, esp_spi_dt_ids);
 
 
 int esp_spi_drv_probe(struct spi_device *spi)
@@ -57,6 +59,7 @@ static struct spi_driver esp_spi_driver =
 	.probe = esp_spi_drv_probe,
 	.remove = esp_spi_drv_remove,
 };
+#endif
 
 
 // maybe one function can be used fo it?
@@ -328,8 +331,11 @@ int esp_net_init(void)
 	esp.ndops.ndo_stop 			= esp_net_close;
 	esp.ndops.ndo_start_xmit 	= esp_net_start_tx;
 
-
+#ifdef SW_BASE
+	wifi_dev = alloc_netdev(sizeof(esp_net_priv_t), "espwifi%d", esp_net_setup);
+#elif defined RPI_BASE
 	wifi_dev = alloc_netdev(sizeof(esp_net_priv_t), "espwifi%d", 0, esp_net_setup); // 4 args for kernel >=3.17
+#endif
 
 	// !!! hardcode
 	esp_net_mac_setup(wifi_dev, devaddr_wifi, 6);
@@ -342,7 +348,11 @@ int esp_net_init(void)
 		return res; 
 	}
 
+#ifdef SW_BASE
+	mesh_dev = alloc_netdev(sizeof(esp_net_priv_t), "espmesh%d", esp_net_mesh_setup);
+#elif defined RPI_BASE
 	mesh_dev = alloc_netdev(sizeof(esp_net_priv_t), "espmesh%d", 0, esp_net_mesh_setup); // 4 args for kernel >=3.17
+#endif
 
 	// !!! hardcode
 	esp_net_mac_setup(mesh_dev, devaddr_mesh, 6);
@@ -749,6 +759,36 @@ static int esp_config_init(void)
 	return 0;
 }
 
+
+#ifdef SW_BASE
+static int esp_spi_init(void)
+{
+	esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
+	esp.chip.bus_num 		= ESP_SPI_BUS_NUM;
+	esp.chip.chip_select 	= ESP_SPI_DEV_NUM;
+	esp.chip.mode 			= SPI_MODE_3;
+
+	esp.master = spi_busnum_to_master(esp.chip.bus_num);
+	if(!(esp.master))
+	{
+		pr_alert("MASTER not found.\n");
+		return -ENODEV;
+	}
+
+	esp.spi_dev = spi_new_device(esp.master, &(esp.chip));
+	if(!(esp.spi_dev)) 
+	{
+		pr_alert("FAILED to create slave(1).\n");
+		return -ENODEV;
+	}
+
+	esp.spi_dev->bits_per_word = 8;
+	spi_setup(esp.spi_dev);
+
+	return 0;
+}
+
+#elif defined RPI_BASE
 static int esp_spi_init(void)
 {
 	int ret = 0;
@@ -764,6 +804,9 @@ static int esp_spi_init(void)
 
 	return 0;
 }
+
+#endif
+
 
 static int esp_wq_init(void)
 {
@@ -885,7 +928,11 @@ static int esp_init(void)
 
 static void esp_deinit(void)
 {
+	#ifdef SW_BASE
+	if(esp.spi_dev != NULL) spi_unregister_device(esp.spi_dev);
+	#elif defined RPI_BASE
 	if(esp.spi_dev != NULL) spi_unregister_driver(&esp_spi_driver);
+	#endif
 
 	if(esp.ctrl_dev.this_device != NULL) 
 		misc_deregister(&(esp.ctrl_dev));
@@ -943,7 +990,10 @@ static void __exit esp_module_exit(void)
 }
 
 MODULE_LICENSE("GPL");
+
+#ifdef RPI_BASE
 MODULE_ALIAS("spi:spidev");
- 
+#endif
+
 module_init(esp_module_init);
 module_exit(esp_module_exit);

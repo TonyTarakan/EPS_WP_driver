@@ -3,7 +3,6 @@
 int slip_unstuff(slip_t * context, unsigned char input, int (*data_route)(slip_t * context))
 {
 	int res = 0;
-	//int j;
 	if(context->pos >= context->maxlen)
 	{
 		context->pos = 0;
