@@ -1,0 +1,3 @@
+config AS100ESP8266
+	tristate "Kernel module for ESP8266 spi device support on AS100GW"
+	depends on SPI
