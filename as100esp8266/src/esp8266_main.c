@@ -445,14 +445,14 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 	if(cmd_buf == NULL)
 		return -ENOMEM;
 
-	ret = copy_from_user(cmd_buf, buf, len);
+	ret = copy_from_user(cmd_buf, (const void __user * )buf, (unsigned long)len);
 	if(ret != 0)
 	{
 		kfree(cmd_buf);
 		return -ENOMEM;
 	}
 
-	if(memcmp(buf, ESP_CMD_ON, len) == 0)
+	if(memcmp(cmd_buf, ESP_CMD_ON, len) == 0)
 	{
 		ret = esp_on(ESP_BOOT_FLASH);
 		if(ret != 0)
@@ -460,7 +460,7 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 		else
 			pr_info("ESP ON\n");
 	}
-	else if(memcmp(buf, ESP_CMD_OFF, len) == 0)
+	else if(memcmp(cmd_buf, ESP_CMD_OFF, len) == 0)
 	{
 		ret = esp_off();
 		if(ret != 0)
@@ -468,7 +468,7 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 		else
 			pr_info("ESP OFF\n");
 	}
-	else if(memcmp(buf, ESP_CMD_RESET, len) == 0)
+	else if(memcmp(cmd_buf, ESP_CMD_RESET, len) == 0)
 	{
 		ret = esp_off();
 		if(ret != 0)
@@ -482,7 +482,7 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 				pr_info("ESP RESET\n");
 		}
 	}
-	else if(memcmp(buf, ESP_CMD_PROG, len) == 0)
+	else if(memcmp(cmd_buf, ESP_CMD_PROG, len) == 0)
 	{
 		ret = esp_off();
 		if(ret != 0)
@@ -506,7 +506,7 @@ static ssize_t on_esp_cmd_received(struct file * file, const char __user * buf, 
 }
 
 
-static ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
+static ssize_t on_esp_ipinfo_read(struct file * file, const char __user * buf, size_t len, loff_t * ppos)
 {
 	int count = esp.ip_info_nodes_count;
 
@@ -516,7 +516,7 @@ static ssize_t on_esp_ipinfo_read(struct file * file, char __user * buf, size_t 
 }
 
 
-static ssize_t on_esp_config_read(struct file * file, char __user * buf, size_t len, loff_t * ppos)
+static ssize_t on_esp_config_read(struct file * file, const char __user * buf, size_t len, loff_t * ppos)
 {
 	int res;
 
@@ -549,7 +549,7 @@ static ssize_t on_esp_config_write(struct file * file, const char __user * buf, 
 	if(write_buf == NULL)
 	 	return -ENOMEM;
 
-	ret = copy_from_user(write_buf, buf, (unsigned long)len);
+	ret = copy_from_user((void *)write_buf, (const void __user * )buf, (unsigned long)len);
 	if(ret)
 	{
 		kfree(write_buf);
@@ -760,9 +760,10 @@ static int esp_config_init(void)
 }
 
 
-#ifdef SW_BASE
+
 static int esp_spi_init(void)
 {
+#ifdef SW_BASE
 	esp.chip.max_speed_hz	= ESP_SPI_MAX_SPEED;
 	esp.chip.bus_num 		= ESP_SPI_BUS_NUM;
 	esp.chip.chip_select 	= ESP_SPI_DEV_NUM;
@@ -786,11 +787,9 @@ static int esp_spi_init(void)
 	spi_setup(esp.spi_dev);
 
 	return 0;
-}
 
 #elif defined RPI_BASE
-static int esp_spi_init(void)
-{
+
 	int ret = 0;
 
 	pr_info("esp_spi_init ... \n");
@@ -803,9 +802,10 @@ static int esp_spi_init(void)
     pr_info("spi_register_driver OK \n");
 
 	return 0;
+#endif
 }
 
-#endif
+
 
 
 static int esp_wq_init(void)
